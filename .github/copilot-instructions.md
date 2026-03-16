@@ -1,7 +1,7 @@
 You are helping me develop an interactive UHF repeater propagation analysis tool as a single-file HTML application.
 
 ## Current State
-A working single-file HTML app (`uhf_propagation_map.html`) with:
+A working single-file HTML app (`index.html`) with:
 - Leaflet.js map, default center 30°26′7″N 98°0′45″W (Texas Hill Country) — location is user-editable
 - **Terrain-adjusted coverage polygons** (not flat circles) computed from real SRTM elevation data
   - 36 bearings × 8 elevation samples per bearing via Open-Elevation API (POST), with automatic

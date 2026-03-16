@@ -316,6 +316,40 @@
     margin-top: 6px;
     font-family: 'Share Tech Mono', monospace;
   }
+  .repeater-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+  .repeater-item:last-child { border-bottom: none; }
+  .repeater-item.active { background: rgba(0,229,255,0.06); margin: 0 -16px; padding: 6px 16px; }
+  .repeater-item:hover:not(.active) { background: rgba(255,255,255,0.03); }
+  .rep-color-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .rep-info { flex: 1; min-width: 0; overflow: hidden; }
+  .rep-name {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .rep-coords { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--muted); }
+  .rep-delete-btn {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    font-size: 10px; padding: 2px 5px; cursor: pointer; flex-shrink: 0;
+    font-family: 'Share Tech Mono', monospace; transition: all 0.1s;
+  }
+  .rep-delete-btn:hover { border-color: var(--danger); color: var(--danger); }
+  .add-site-btn {
+    width: 100%; margin-top: 10px;
+    background: rgba(57,255,20,0.08); border: 1px solid var(--accent3);
+    color: var(--accent3); font-family: 'Share Tech Mono', monospace;
+    font-size: 11px; padding: 6px; cursor: pointer; letter-spacing: 2px;
+    transition: background 0.15s;
+  }
+  .add-site-btn:hover { background: rgba(57,255,20,0.2); }
 </style>
 </head>
 <body>
@@ -332,7 +366,17 @@
   <div class="sidebar">
 
     <div class="panel">
-      <div class="panel-title">// Repeater Location</div>
+      <div class="panel-title">// Repeater Sites</div>
+      <div id="rep-list"></div>
+      <button class="add-site-btn" id="btn-add-site">+ ADD SITE</button>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">// Location &mdash; <span id="active-site-label" style="color:#00e5ff">SITE-1</span></div>
+      <div class="param-row">
+        <span class="param-label">Site Name</span>
+        <input class="param-input" id="inp-name" type="text" value="SITE-1" style="width:100px;text-align:left">
+      </div>
       <div class="param-row">
         <span class="param-label">Latitude (°N)</span>
         <input class="param-input" id="inp-lat" type="number" step="0.00001" value="30.43528">
@@ -345,7 +389,7 @@
         <span class="param-label">Site Elev. (ft)</span>
         <input class="param-input" id="inp-site-elev" type="number" min="-1000" max="20000" step="1" placeholder="AUTO">
       </div>
-      <div class="input-hint">Drag the map marker or enter coords &mdash; leave elevation blank to auto-fetch</div>
+      <div class="input-hint">Drag marker or enter coords &mdash; leave elevation blank to auto-fetch</div>
       <button class="apply-btn" id="btn-apply-loc">↻ APPLY LOCATION</button>
     </div>
 
@@ -449,13 +493,30 @@
 
 <div class="footer-bar">
   <div>MODE: <span>UHF LOS ANALYSIS</span></div>
-  <div>SITE: <span id="footer-site">30.4353°N 98.0125°W</span></div>
+  <div>SITES: <span id="footer-count">1</span></div>
+  <div>ACTIVE: <span id="footer-site">30.4353°N 98.0125°W</span></div>
   <div>PWR: <span id="footer-pwr">50W</span></div>
   <div>BAND: <span>70cm</span></div>
   <div>DATUM: <span>WGS-84</span></div>
 </div>
 
 <script>
+// ===== CONSTANTS =====
+const NUM_BEARINGS = 36;
+const NUM_SAMPLES  = 8;
+const MAX_RANGE_KM = 88.5;
+const RX_HEIGHT_M  = 2;
+const RE_EFF_KM    = 8495;
+const TIER_CONFIG  = [
+  { flatKm: 88.5, weight: 1.5, dash: '6,4', fillAlpha: 0.06 },
+  { flatKm: 64.4, weight: 1.5, dash: '4,3', fillAlpha: 0.10 },
+  { flatKm: 40.2, weight: 1.5, dash: '4,2', fillAlpha: 0.14 },
+  { flatKm: 24.1, weight: 2,   dash: null,  fillAlpha: 0.22 },
+];
+const TIER_COLORS = ['#ff3d3d','#ffc800','#00e5ff','#39ff14'];
+const REP_PALETTE = ['#00e5ff','#ff6b00','#39ff14','#bf5fff','#ffee00','#ff69b4','#ff3d3d','#00ff99'];
+
+// Dummy LAT/LON so inline init values still resolve before first render
 let LAT = 30 + 26/60 + 7/3600;
 let LON = -(98 + 0/60 + 45/3600);
 
@@ -478,447 +539,377 @@ const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 });
 
 topo.addTo(map);
+let currentBase = topo;
 
-// Miles to meters
-const mi2m = mi => mi * 1609.34;
+// Layer toggle buttons
+const btnTopo = document.createElement('button'); btnTopo.className = 'ctrl-btn active'; btnTopo.textContent = 'TOPO';
+const btnOSM  = document.createElement('button'); btnOSM.className  = 'ctrl-btn';        btnOSM.textContent  = 'OSM';
+const btnSat  = document.createElement('button'); btnSat.className  = 'ctrl-btn';        btnSat.textContent  = 'SAT';
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{attribution:'© Esri',maxZoom:18});
+const ctrlDiv = document.createElement('div'); ctrlDiv.className = 'map-controls';
+ctrlDiv.append(btnTopo, btnOSM, btnSat);
+document.getElementById('map').appendChild(ctrlDiv);
+function switchBase(lyr, btn) {
+  map.removeLayer(currentBase); lyr.addTo(map); currentBase = lyr;
+  [btnTopo,btnOSM,btnSat].forEach(b => b.classList.remove('active')); btn.classList.add('active');
+}
+btnTopo.onclick = () => switchBase(topo, btnTopo);
+btnOSM.onclick  = () => switchBase(osm,  btnOSM);
+btnSat.onclick  = () => switchBase(sat,  btnSat);
 
-// Coverage layers — populated by terrain analysis, never pre-drawn
-const circleLayers = [];
+// Popup + spinner styles
+const styleEl = document.createElement('style');
+styleEl.textContent = `
+  .dark-popup .leaflet-popup-content-wrapper, .dark-popup .leaflet-popup-tip {
+    background:#0a0d0f;color:#c8d8dc;border:1px solid #1e2a30;
+    box-shadow:0 4px 20px rgba(0,229,255,0.15);
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+`;
+document.head.appendChild(styleEl);
 
-// Map loading overlay — shown until terrain analysis completes
+// Map loading overlay
 const mapOverlay = document.createElement('div');
 mapOverlay.id = 'map-loading-overlay';
 mapOverlay.innerHTML = `
   <div style="display:flex;flex-direction:column;align-items:center;gap:12px">
-    <div id="map-load-spinner" style="width:32px;height:32px;border:3px solid #1e2a30;border-top-color:#00e5ff;border-radius:50%;animation:spin 0.8s linear infinite"></div>
+    <div style="width:32px;height:32px;border:3px solid #1e2a30;border-top-color:#00e5ff;border-radius:50%;animation:spin 0.8s linear infinite"></div>
     <div id="map-load-msg" style="font-family:'Share Tech Mono',monospace;font-size:12px;color:#00e5ff;letter-spacing:1px">FETCHING TERRAIN DATA…</div>
     <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:#4a6070">Sampling elevation along 36 bearings</div>
   </div>`;
-Object.assign(mapOverlay.style, {
-  position: 'absolute', inset: '0', zIndex: '999',
-  background: 'rgba(10,13,15,0.72)', backdropFilter: 'blur(2px)',
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  pointerEvents: 'none'
-});
+Object.assign(mapOverlay.style,{position:'absolute',inset:'0',zIndex:'999',background:'rgba(10,13,15,0.72)',backdropFilter:'blur(2px)',display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'});
 document.getElementById('map').appendChild(mapOverlay);
-// spinner keyframes
-(function(){
-  const s = document.createElement('style');
-  s.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
-  document.head.appendChild(s);
-})();
+function setOverlayMsg(t) { const e=document.getElementById('map-load-msg'); if(e) e.textContent=t; }
+function showOverlay(m) { mapOverlay.style.display='flex'; setOverlayMsg(m||'FETCHING TERRAIN DATA…'); }
+function hideOverlay()  { mapOverlay.style.display='none'; }
 
-// Compass rose range labels — in a layer group so they can be redrawn on location change
-const labelRingsConfig = [
-  { mi: 15, color: '#39ff14' },
-  { mi: 25, color: '#00e5ff' },
-  { mi: 40, color: '#ffc800' },
-  { mi: 55, color: '#ff3d3d' },
-];
-const cardinalBearings = [0, 90, 180, 270];
-let labelGroup = L.layerGroup().addTo(map);
-
-function drawLabels() {
-  labelGroup.clearLayers();
-  labelRingsConfig.forEach(ring => {
-    cardinalBearings.forEach(bearing => {
-      const rad  = (bearing * Math.PI) / 180;
-      const dLat = (ring.mi / 69.0) * Math.cos(rad);
-      const dLon = (ring.mi / (69.0 * Math.cos(LAT * Math.PI / 180))) * Math.sin(rad);
-      L.marker([LAT + dLat, LON + dLon], {
-        icon: L.divIcon({
-          className: '',
-          html: `<div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:${ring.color};background:rgba(10,13,15,0.75);padding:1px 4px;border:1px solid ${ring.color}33;white-space:nowrap">${ring.mi}mi</div>`,
-          iconAnchor: [16, 8]
-        }),
-        interactive: false
-      }).addTo(labelGroup);
-    });
-  });
-}
-drawLabels();
-
-// Repeater marker — draggable so location can be updated interactively
-const repeaterIcon = L.divIcon({
-  className: '',
-  html: `<div style="position:relative;width:20px;height:20px">
-    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:16px;height:16px;background:#00e5ff;border-radius:50%;box-shadow:0 0 0 0 rgba(0,229,255,0.5);animation:pulse 2s infinite"></div>
-    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:6px;height:6px;background:#000;border-radius:50%;z-index:2"></div>
-  </div>
-  <style>@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(0,229,255,0.5)}70%{box-shadow:0 0 0 14px rgba(0,229,255,0)}100%{box-shadow:0 0 0 0 rgba(0,229,255,0)}}</style>`,
-  iconSize: [20, 20],
-  iconAnchor: [10, 10]
-});
-
-let repMarker;
-function buildRepeaterMarker() {
-  if (repMarker) map.removeLayer(repMarker);
-  repMarker = L.marker([LAT, LON], { icon: repeaterIcon, draggable: true })
-    .addTo(map)
-    .bindPopup(() => {
-      const watts = document.getElementById('inp-power')?.value || '50';
-      const freq  = document.getElementById('inp-freq')?.value  || '440';
-      const eirp  = document.getElementById('disp-eirp')?.textContent || '55.2 dBm';
-      return `<div style="font-family:'Share Tech Mono',monospace;font-size:12px;background:#0a0d0f;color:#c8d8dc;padding:6px;border:1px solid #1e2a30;min-width:180px">
-        <div style="color:#00e5ff;font-size:13px;margin-bottom:6px">&#128225; UHF REPEATER SITE</div>
-        <div>Lat: ${LAT.toFixed(5)}&#176;</div>
-        <div>Lon: ${LON.toFixed(5)}&#176;</div>
-        <div style="margin-top:4px;color:#39ff14">TX: ${watts}W | ${freq} MHz</div>
-        <div>EIRP: ~${eirp}</div>
-      </div>`;
-    }, { className: 'dark-popup' });
-  repMarker.on('dragend', e => {
-    const p = e.target.getLatLng();
-    LAT = p.lat; LON = p.lng;
-    document.getElementById('inp-lat').value = p.lat.toFixed(5);
-    document.getElementById('inp-lon').value = p.lng.toFixed(5);
-    // Reset auto-elevation so new location gets a fresh fetch
-    const elevInp = document.getElementById('inp-site-elev');
-    if (elevInp && elevInp.value === '') elevInp.placeholder = 'AUTO';
-    updateHeaderFooter();
-    drawLabels();
-    computeTerrainCoverage();
-  });
-}
-buildRepeaterMarker();
-
-// Layer toggle buttons
-const btnTopo = document.createElement('button');
-btnTopo.className = 'ctrl-btn active';
-btnTopo.textContent = 'TOPO';
-
-const btnOSM = document.createElement('button');
-btnOSM.className = 'ctrl-btn';
-btnOSM.textContent = 'OSM';
-
-const btnSat = document.createElement('button');
-btnSat.className = 'ctrl-btn';
-btnSat.textContent = 'SAT';
-
-const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-  attribution: '© Esri',
-  maxZoom: 18
-});
-
-const ctrlDiv = document.createElement('div');
-ctrlDiv.className = 'map-controls';
-ctrlDiv.appendChild(btnTopo);
-ctrlDiv.appendChild(btnOSM);
-ctrlDiv.appendChild(btnSat);
-document.getElementById('map').appendChild(ctrlDiv);
-
-let currentBase = topo;
-
-btnTopo.addEventListener('click', () => {
-  map.removeLayer(currentBase);
-  topo.addTo(map); currentBase = topo;
-  [btnTopo, btnOSM, btnSat].forEach(b => b.classList.remove('active'));
-  btnTopo.classList.add('active');
-});
-
-btnOSM.addEventListener('click', () => {
-  map.removeLayer(currentBase);
-  osm.addTo(map); currentBase = osm;
-  [btnTopo, btnOSM, btnSat].forEach(b => b.classList.remove('active'));
-  btnOSM.classList.add('active');
-});
-
-btnSat.addEventListener('click', () => {
-  map.removeLayer(currentBase);
-  sat.addTo(map); currentBase = sat;
-  [btnTopo, btnOSM, btnSat].forEach(b => b.classList.remove('active'));
-  btnSat.classList.add('active');
-});
-
-// Leaflet popup dark style injection
-const style = document.createElement('style');
-style.textContent = `
-  .dark-popup .leaflet-popup-content-wrapper,
-  .dark-popup .leaflet-popup-tip {
-    background: #0a0d0f;
-    color: #c8d8dc;
-    border: 1px solid #1e2a30;
-    box-shadow: 0 4px 20px rgba(0,229,255,0.15);
-  }
-`;
-document.head.appendChild(style);
-
-// ===== TERRAIN-ADJUSTED PROPAGATION =====
-// Samples elevation along 36 bearings, computes per-bearing LOS limit using
-// Earth-curvature-corrected terrain profiles (K=4/3 effective Earth), then
-// replaces the flat-earth circles with terrain-clipped polygons.
-
-const NUM_BEARINGS = 36;         // one sample bearing every 10°
-const NUM_SAMPLES  = 8;          // elevation points per bearing
-const MAX_RANGE_KM = 88.5;       // ~55 mi analysis limit
-const RX_HEIGHT_M  = 2;          // typical mobile antenna height
-const RE_EFF_KM    = 8495;       // effective Earth radius, K=4/3
-
-// Tier definitions: outer → inner (drawn in this order for correct z-stack)
-const TIER_CONFIG = [
-  { flatKm: 88.5, color: '#ff3d3d', fillAlpha: 0.06, weight: 1.5, dash: '6,4' },
-  { flatKm: 64.4, color: '#ffc800', fillAlpha: 0.10, weight: 1.5, dash: '4,3' },
-  { flatKm: 40.2, color: '#00e5ff', fillAlpha: 0.14, weight: 1.5, dash: '4,2' },
-  { flatKm: 24.1, color: '#39ff14', fillAlpha: 0.22, weight: 2,   dash: null  },
-];
-
-// Haversine destination: returns [lat, lon] at distKm on bearingDeg from origin
+// ===== TERRAIN HELPERS =====
 function destinationPoint(lat, lon, bearingDeg, distKm) {
-  const R  = 6371;
-  const d  = distKm / R;
-  const b  = (bearingDeg % 360) * Math.PI / 180;
-  const φ1 = lat * Math.PI / 180;
-  const λ1 = lon * Math.PI / 180;
-  const φ2 = Math.asin(Math.sin(φ1)*Math.cos(d) + Math.cos(φ1)*Math.sin(d)*Math.cos(b));
-  const λ2 = λ1 + Math.atan2(Math.sin(b)*Math.sin(d)*Math.cos(φ1), Math.cos(d) - Math.sin(φ1)*Math.sin(φ2));
-  return [φ2 * 180/Math.PI, λ2 * 180/Math.PI];
+  const R=6371, d=distKm/R, b=(bearingDeg%360)*Math.PI/180;
+  const φ1=lat*Math.PI/180, λ1=lon*Math.PI/180;
+  const φ2=Math.asin(Math.sin(φ1)*Math.cos(d)+Math.cos(φ1)*Math.sin(d)*Math.cos(b));
+  const λ2=λ1+Math.atan2(Math.sin(b)*Math.sin(d)*Math.cos(φ1),Math.cos(d)-Math.sin(φ1)*Math.sin(φ2));
+  return [φ2*180/Math.PI, λ2*180/Math.PI];
 }
-
-// Earth bulge (m) at intermediate distance d_km on a path of total D_km, K=4/3
-// Formula: h = d*(D-d) / (2*Re_eff)  [km² / km → km → *1000 → m]
-function earthBulge(d_km, D_km) {
-  return (d_km * (D_km - d_km)) / (2 * RE_EFF_KM) * 1000;
-}
-
-// Returns true if TX (at txMSL + antH metres MSL) has clear LOS to profile[targetIdx].
-// Checks every intermediate sample in profile[] using curvature-corrected terrain heights.
-function checkLOS(txMSL, antH, profile, targetIdx) {
-  const target = profile[targetIdx];
-  const rxMSL  = target.elevM + RX_HEIGHT_M;
-  const D      = target.distKm;
-  const txH    = txMSL + antH;
-  for (let j = 0; j < targetIdx; j++) {
-    const pt   = profile[j];
-    const d    = pt.distKm;
-    const obst = pt.elevM + earthBulge(d, D);      // terrain + curvature bulge
-    const los  = txH + (rxMSL - txH) * (d / D);   // straight LOS ray height
-    if (obst > los) return false;
+function earthBulge(d_km,D_km){ return (d_km*(D_km-d_km))/(2*RE_EFF_KM)*1000; }
+function checkLOS(txMSL,antH,profile,targetIdx){
+  const {elevM:rxElev,distKm:D}=profile[targetIdx], txH=txMSL+antH, rxH=rxElev+RX_HEIGHT_M;
+  for(let j=0;j<targetIdx;j++){
+    const {elevM,distKm:d}=profile[j];
+    if(elevM+earthBulge(d,D)>txH+(rxH-txH)*(d/D)) return false;
   }
   return true;
 }
-
-function setTerrainStatus(text, cls) {
-  const el = document.getElementById('terrain-status');
-  if (!el) return;
-  el.textContent = text;
-  el.className   = 'param-value' + (cls ? ' ' + cls : '');
-}
-
-function setOverlayMsg(text) {
-  const el = document.getElementById('map-load-msg');
-  if (el) el.textContent = text;
-}
-
-function hideOverlay() {
-  const ov = document.getElementById('map-loading-overlay');
-  if (ov) ov.style.display = 'none';
-}
-
-function showOverlay(msg) {
-  const ov = document.getElementById('map-loading-overlay');
-  if (ov) ov.style.display = 'flex';
-  setOverlayMsg(msg || 'FETCHING TERRAIN DATA…');
-}
-
-// Batch elevation fetch — Open-Elevation POST (primary) → Open-Meteo GET (fallback)
-async function fetchElevationBatch(locations) {
-  try {
-    const r = await fetch('https://api.open-elevation.com/api/v1/lookup', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body:    JSON.stringify({ locations }),
-      signal:  AbortSignal.timeout(25000)
-    });
-    if (r.ok) {
-      const d = await r.json();
-      if (d.results && d.results.length === locations.length)
-        return d.results.map(x => x.elevation);
-    }
-  } catch (_) { /* fall through to backup */ }
-
-  // Fallback: Open-Meteo elevation API (batched GETs, ≤100 pts each)
-  const elevs = [];
-  for (let i = 0; i < locations.length; i += 100) {
-    const chunk = locations.slice(i, i + 100);
-    const lats  = chunk.map(p => p.latitude.toFixed(5)).join(',');
-    const lons  = chunk.map(p => p.longitude.toFixed(5)).join(',');
-    const r     = await fetch(
-      `https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lons}`,
-      { signal: AbortSignal.timeout(15000) }
-    );
-    if (!r.ok) throw new Error(`Open-Meteo elevation HTTP ${r.status}`);
-    const d = await r.json();
-    elevs.push(...d.elevation);
+async function fetchElevationBatch(locations){
+  try{
+    const r=await fetch('https://api.open-elevation.com/api/v1/lookup',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({locations}),signal:AbortSignal.timeout(25000)});
+    if(r.ok){const d=await r.json(); if(d.results?.length===locations.length) return d.results.map(x=>x.elevation);}
+  }catch(_){}
+  const elevs=[];
+  for(let i=0;i<locations.length;i+=100){
+    const chunk=locations.slice(i,i+100);
+    const r=await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${chunk.map(p=>p.latitude.toFixed(5)).join(',')}&longitude=${chunk.map(p=>p.longitude.toFixed(5)).join(',')}`,{signal:AbortSignal.timeout(15000)});
+    if(!r.ok) throw new Error(`Open-Meteo ${r.status}`);
+    elevs.push(...(await r.json()).elevation);
   }
   return elevs;
 }
 
-async function computeTerrainCoverage() {
-  showOverlay('FETCHING TERRAIN DATA…');
-  setTerrainStatus('FETCHING SITE ELEVATION…', 'warn');
-  setOverlayMsg('FETCHING SITE ELEVATION…');
-  try {
-    // Antenna height from editable input (ft → m)
-    const antHeightM = (parseFloat(document.getElementById('inp-haat')?.value) || 200) / 3.281;
-    // 1. Actual repeater site elevation — use user-supplied value if present, else fetch
-    const userElevFt = parseFloat(document.getElementById('inp-site-elev')?.value);
-    let txMSL;
-    if (!isNaN(userElevFt)) {
-      txMSL = userElevFt / 3.281;
-    } else {
-      [txMSL] = await fetchElevationBatch([{ latitude: LAT, longitude: LON }]);
-      const elevInput = document.getElementById('inp-site-elev');
-      if (elevInput) elevInput.placeholder = Math.round(txMSL * 3.281) + ' ft (auto)';
-    }
+// ===== REPEATER DATA MODEL =====
+let nextRepId = 1;
+const repeaters  = [];
+let activeRepId  = null;
 
-    // 2. Build bearing × sample point grid
-    const locations = [];
-    const grid      = [];  // grid[b][s] = index into locations[]
-    for (let b = 0; b < NUM_BEARINGS; b++) {
-      const bearing = (b * 360) / NUM_BEARINGS;
-      grid[b] = [];
-      for (let s = 1; s <= NUM_SAMPLES; s++) {
-        const distKm     = (s / NUM_SAMPLES) * MAX_RANGE_KM;
-        const [lat, lon] = destinationPoint(LAT, LON, bearing, distKm);
-        grid[b][s - 1]   = locations.length;
-        locations.push({ latitude: lat, longitude: lon });
+function activeRep(){ return repeaters.find(r=>r.id===activeRepId)||repeaters[0]; }
+function repColor(rep){ return REP_PALETTE[(rep.id-1)%REP_PALETTE.length]; }
+function makeRepeaterObj(opts={}){
+  const id=nextRepId++;
+  return {
+    id, label:opts.label??`SITE-${id}`,
+    lat:opts.lat??30.43528, lon:opts.lon??-98.01250,
+    siteElevFt:opts.siteElevFt??null, _autoElevFt:null,
+    power:opts.power??50, freq:opts.freq??440, gain:opts.gain??6,
+    cable:opts.cable??2, rxSen:opts.rxSen??-120, haat:opts.haat??200,
+    layers:[], marker:null, losRanges:null,
+  };
+}
+
+// ===== MARKERS =====
+function makeMarkerIcon(color){
+  const kfName='rp_'+color.slice(1);
+  return L.divIcon({
+    className:'',
+    html:`<div style="position:relative;width:20px;height:20px">
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:16px;height:16px;background:${color};border-radius:50%;animation:${kfName} 2s infinite"></div>
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:6px;height:6px;background:#000;border-radius:50%;z-index:2"></div>
+    </div>
+    <style>@keyframes ${kfName}{0%{box-shadow:0 0 0 0 ${color}80}70%{box-shadow:0 0 0 12px ${color}00}100%{box-shadow:0 0 0 0 ${color}00}}</style>`,
+    iconSize:[20,20],iconAnchor:[10,10]
+  });
+}
+function buildMarkerForRepeater(rep){
+  if(rep.marker) map.removeLayer(rep.marker);
+  const color=repColor(rep);
+  rep.marker=L.marker([rep.lat,rep.lon],{icon:makeMarkerIcon(color),draggable:true})
+    .addTo(map)
+    .bindPopup(()=>`<div style="font-family:'Share Tech Mono',monospace;font-size:12px;background:#0a0d0f;color:#c8d8dc;padding:6px;border:1px solid #1e2a30;min-width:180px">
+      <div style="color:${color};font-size:13px;margin-bottom:6px">&#128225; ${rep.label}</div>
+      <div>Lat: ${rep.lat.toFixed(5)}°</div><div>Lon: ${rep.lon.toFixed(5)}°</div>
+      <div style="margin-top:4px;color:#39ff14">TX: ${rep.power}W | ${rep.freq} MHz</div>
+    </div>`,{className:'dark-popup'});
+  rep.marker.on('dragend',e=>{
+    const p=e.target.getLatLng();
+    rep.lat=p.lat; rep.lon=p.lng; rep.siteElevFt=null; rep._autoElevFt=null;
+    if(rep.id===activeRepId){ loadRepIntoSidebar(rep); drawLabels(); }
+    renderRepeaterList(); updateHeaderFooter();
+    computeActiveRepCoverage(rep);
+  });
+}
+
+// ===== LABELS =====
+let labelGroup=L.layerGroup().addTo(map);
+function drawLabels(){
+  labelGroup.clearLayers();
+  const rep=activeRep(); if(!rep) return;
+  [{mi:15,color:'#39ff14'},{mi:25,color:'#00e5ff'},{mi:40,color:'#ffc800'},{mi:55,color:'#ff3d3d'}].forEach(ring=>{
+    [0,90,180,270].forEach(bearing=>{
+      const rad=bearing*Math.PI/180;
+      const dLat=(ring.mi/69.0)*Math.cos(rad);
+      const dLon=(ring.mi/(69.0*Math.cos(rep.lat*Math.PI/180)))*Math.sin(rad);
+      L.marker([rep.lat+dLat,rep.lon+dLon],{
+        icon:L.divIcon({className:'',html:`<div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:${ring.color};background:rgba(10,13,15,0.75);padding:1px 4px;border:1px solid ${ring.color}33;white-space:nowrap">${ring.mi}mi</div>`,iconAnchor:[16,8]}),
+        interactive:false
+      }).addTo(labelGroup);
+    });
+  });
+}
+
+// ===== COVERAGE COMPUTE =====
+async function computeCoverageForRepeater(rep){
+  const antH=rep.haat/3.281;
+  try{
+    let txMSL;
+    if(rep.siteElevFt!==null){
+      txMSL=rep.siteElevFt/3.281;
+    } else {
+      [txMSL]=await fetchElevationBatch([{latitude:rep.lat,longitude:rep.lon}]);
+      rep._autoElevFt=Math.round(txMSL*3.281);
+      if(rep.id===activeRepId){
+        const el=document.getElementById('inp-site-elev');
+        if(el&&el.value==='') el.placeholder=rep._autoElevFt+' ft (auto)';
       }
     }
-
-    setTerrainStatus(`SAMPLING ${locations.length} TERRAIN PTS…`, 'warn');
-    setOverlayMsg(`SAMPLING ${locations.length} ELEVATION POINTS…`);
-
-    // 3. Batch-fetch all terrain elevations
-    const elevs = await fetchElevationBatch(locations);
-
-    // 4. Per-bearing: find first blocked sample → that is the LOS limit
-    const losRanges = [];
-    for (let b = 0; b < NUM_BEARINGS; b++) {
-      const profile = grid[b].map((idx, s) => ({
-        distKm: ((s + 1) / NUM_SAMPLES) * MAX_RANGE_KM,
-        elevM:  elevs[idx]
-      }));
-      let losKm = MAX_RANGE_KM;   // assume clear until proven blocked
-      for (let s = 0; s < NUM_SAMPLES; s++) {
-        if (!checkLOS(txMSL, antHeightM, profile, s)) {
-          losKm = s > 0 ? profile[s - 1].distKm : profile[0].distKm * 0.5;
-          break;
-        }
+    const locations=[],grid=[];
+    for(let b=0;b<NUM_BEARINGS;b++){
+      grid[b]=[];
+      for(let s=1;s<=NUM_SAMPLES;s++){
+        const [la,lo]=destinationPoint(rep.lat,rep.lon,(b*360)/NUM_BEARINGS,(s/NUM_SAMPLES)*MAX_RANGE_KM);
+        grid[b][s-1]=locations.length;
+        locations.push({latitude:la,longitude:lo});
+      }
+    }
+    const elevs=await fetchElevationBatch(locations);
+    const losRanges=[];
+    for(let b=0;b<NUM_BEARINGS;b++){
+      const profile=grid[b].map((idx,s)=>({distKm:((s+1)/NUM_SAMPLES)*MAX_RANGE_KM,elevM:elevs[idx]}));
+      let losKm=MAX_RANGE_KM;
+      for(let s=0;s<NUM_SAMPLES;s++){
+        if(!checkLOS(txMSL,antH,profile,s)){ losKm=s>0?profile[s-1].distKm:profile[0].distKm*0.5; break; }
       }
       losRanges.push(losKm);
     }
-
-    // 5. Replace flat circles/polygons with terrain-adjusted polygons
-    circleLayers.forEach(l => map.removeLayer(l));
-    circleLayers.length = 0;
-
-    TIER_CONFIG.forEach(tier => {
-      const pts = [];
-      for (let b = 0; b < NUM_BEARINGS; b++) {
-        const rangeKm = Math.min(tier.flatKm, losRanges[b]);
-        pts.push(destinationPoint(LAT, LON, (b * 360) / NUM_BEARINGS, rangeKm));
-      }
-      const lyr = L.polygon(pts, {
-        color:        tier.color,
-        weight:       tier.weight,
-        dashArray:    tier.dash,
-        fillColor:    tier.color,
-        fillOpacity:  tier.fillAlpha,
-        smoothFactor: 2,
-        interactive:  false
-      }).addTo(map);
-      circleLayers.push(lyr);
+    rep.losRanges=losRanges;
+    rep.layers.forEach(l=>map.removeLayer(l)); rep.layers=[];
+    TIER_CONFIG.forEach((tier,i)=>{
+      const pts=[];
+      for(let b=0;b<NUM_BEARINGS;b++)
+        pts.push(destinationPoint(rep.lat,rep.lon,(b*360)/NUM_BEARINGS,Math.min(tier.flatKm,losRanges[b])));
+      const lyr=L.polygon(pts,{color:TIER_COLORS[i],weight:tier.weight,dashArray:tier.dash,fillColor:TIER_COLORS[i],fillOpacity:tier.fillAlpha,smoothFactor:2,interactive:false}).addTo(map);
+      rep.layers.push(lyr);
     });
-
-    // 6. Update sidebar stats
-    const toMi = km => (km / 1.60934).toFixed(1);
-    const ge   = id => document.getElementById(id);
-    if (ge('min-los')) ge('min-los').textContent = toMi(Math.min(...losRanges)) + ' mi';
-    if (ge('avg-los')) ge('avg-los').textContent = toMi(losRanges.reduce((a, b) => a + b, 0) / NUM_BEARINGS) + ' mi';
-    if (ge('max-los')) ge('max-los').textContent = toMi(Math.max(...losRanges)) + ' mi';
-
-    setTerrainStatus('TOPO-ADJUSTED ✓', 'ok');
-    hideOverlay();
-
-  } catch (err) {
-    console.error('Terrain coverage failed:', err);
-    setTerrainStatus('API UNAVAILABLE — FLAT-EARTH', 'warn');
-    // Draw flat-earth fallback circles so the map isn't empty
-    const flatConfig = [
-      { flatKm: 88.5, color: '#ff3d3d', fillAlpha: 0.06, weight: 1.5, dash: '6,4' },
-      { flatKm: 64.4, color: '#ffc800', fillAlpha: 0.10, weight: 1.5, dash: '4,3' },
-      { flatKm: 40.2, color: '#00e5ff', fillAlpha: 0.14, weight: 1.5, dash: '4,2' },
-      { flatKm: 24.1, color: '#39ff14', fillAlpha: 0.22, weight: 2,   dash: null  },
-    ];
-    circleLayers.forEach(l => map.removeLayer(l)); circleLayers.length = 0;
-    flatConfig.forEach(tier => {
-      const lyr = L.circle([LAT, LON], {
-        radius: tier.flatKm * 1000,
-        color: tier.color, weight: tier.weight, dashArray: tier.dash,
-        fillColor: tier.color, fillOpacity: tier.fillAlpha, interactive: false
-      }).addTo(map);
-      circleLayers.push(lyr);
+  } catch(err){
+    console.error(`Coverage failed for ${rep.label}:`,err);
+    rep.layers.forEach(l=>map.removeLayer(l)); rep.layers=[];
+    TIER_CONFIG.forEach((tier,i)=>{
+      const lyr=L.circle([rep.lat,rep.lon],{radius:tier.flatKm*1000,color:TIER_COLORS[i],weight:tier.weight,dashArray:tier.dash,fillColor:TIER_COLORS[i],fillOpacity:tier.fillAlpha,interactive:false}).addTo(map);
+      rep.layers.push(lyr);
     });
-    hideOverlay();
+    if(rep.id===activeRepId) setTerrainStatus('API UNAVAILABLE — FLAT-EARTH','warn');
   }
 }
 
-// ===== EDITABLE PARAMETERS & LOCATION =====
-function calcLinkBudget() {
-  const watts   = parseFloat(document.getElementById('inp-power').value) || 50;
-  const gainDbd = parseFloat(document.getElementById('inp-gain').value)  || 6;
-  const cable   = parseFloat(document.getElementById('inp-cable').value) || 2;
-  const rxSen   = parseFloat(document.getElementById('inp-rxsen').value) || -120;
-  const pDbm    = 10 * Math.log10(watts) + 30;
-  const gDbi    = gainDbd + 2.15;
-  const eirp    = +(pDbm + gDbi - cable).toFixed(1);
-  const margin  = +(eirp + 2.15 - 3 - rxSen).toFixed(1);
-  const pct     = Math.min(100, Math.max(0, (margin / 200) * 100));
-
-  document.getElementById('disp-eirp').textContent      = eirp + ' dBm';
-  document.getElementById('disp-lb-eirp').textContent   = '+' + eirp + ' dBm';
-  document.getElementById('disp-rxsen').textContent     = rxSen + ' dBm';
-  document.getElementById('disp-margin').textContent    = margin + ' dB';
-  document.getElementById('lb-fill').style.width        = pct + '%';
-  document.getElementById('lb-label-mid').textContent   = margin + ' dB avail.';
+async function computeActiveRepCoverage(repOverride){
+  const rep=repOverride||activeRep(); if(!rep) return;
+  showOverlay(`COMPUTING ${rep.label}…`);
+  setTerrainStatus('COMPUTING…','warn');
+  setOverlayMsg(`FETCHING ELEVATION FOR ${rep.label}…`);
+  await computeCoverageForRepeater(rep);
+  if(rep.id===activeRepId){ updateTerrainStats(); setTerrainStatus('TOPO-ADJUSTED ✓','ok'); }
+  hideOverlay();
 }
 
-function updateHeaderFooter() {
-  const watts = document.getElementById('inp-power')?.value || '50';
-  document.querySelector('.coords').textContent =
-    `${LAT.toFixed(4)}° N \u00a0|\u00a0 ${Math.abs(LON).toFixed(4)}° W \u00a0|\u00a0 ${watts}W ERP`;
-  const fs = document.getElementById('footer-site');
-  if (fs) fs.textContent = `${LAT.toFixed(4)}°N ${LON.toFixed(4)}°W`;
-  const fp = document.getElementById('footer-pwr');
-  if (fp) fp.textContent = watts + 'W';
+function updateTerrainStats(){
+  const rep=activeRep(), ge=id=>document.getElementById(id);
+  if(!rep?.losRanges){ ['min-los','avg-los','max-los'].forEach(id=>{const e=ge(id);if(e)e.textContent='—';}); return; }
+  const toMi=km=>(km/1.60934).toFixed(1), lr=rep.losRanges;
+  if(ge('min-los')) ge('min-los').textContent=toMi(Math.min(...lr))+' mi';
+  if(ge('avg-los')) ge('avg-los').textContent=toMi(lr.reduce((a,b)=>a+b,0)/NUM_BEARINGS)+' mi';
+  if(ge('max-los')) ge('max-los').textContent=toMi(Math.max(...lr))+' mi';
+}
+function setTerrainStatus(text,cls){
+  const el=document.getElementById('terrain-status'); if(!el) return;
+  el.textContent=text; el.className='param-value'+(cls?' '+cls:'');
 }
 
-document.getElementById('btn-apply-params').addEventListener('click', () => {
+// ===== REPEATER LIST UI =====
+function renderRepeaterList(){
+  const list=document.getElementById('rep-list'); if(!list) return;
+  list.innerHTML='';
+  repeaters.forEach(rep=>{
+    const color=repColor(rep), isActive=rep.id===activeRepId;
+    const row=document.createElement('div');
+    row.className='repeater-item'+(isActive?' active':'');
+    row.innerHTML=`
+      <div class="rep-color-dot" style="background:${color};box-shadow:0 0 5px ${color}90"></div>
+      <div class="rep-info">
+        <div class="rep-name">${rep.label}</div>
+        <div class="rep-coords">${rep.lat.toFixed(3)}°&nbsp;${rep.lon.toFixed(3)}°&nbsp;&nbsp;${rep.power}W</div>
+      </div>
+      ${repeaters.length>1?`<button class="rep-delete-btn" title="Remove">✕</button>`:''}`.trim();
+    row.querySelector('.rep-info').addEventListener('click',()=>setActiveRepeater(rep.id));
+    row.querySelector('.rep-color-dot').addEventListener('click',()=>setActiveRepeater(rep.id));
+    const del=row.querySelector('.rep-delete-btn');
+    if(del) del.addEventListener('click',e=>{e.stopPropagation();removeRepeater(rep.id);});
+    list.appendChild(row);
+  });
+}
+function setActiveRepeater(id){
+  activeRepId=id; renderRepeaterList();
+  const rep=activeRep(); if(!rep) return;
+  loadRepIntoSidebar(rep); drawLabels(); updateTerrainStats(); updateHeaderFooter();
+  map.panTo([rep.lat,rep.lon]);
+}
+function loadRepIntoSidebar(rep){
+  const ge=id=>document.getElementById(id);
+  if(ge('inp-name'))     ge('inp-name').value=rep.label;
+  if(ge('inp-lat'))      ge('inp-lat').value=rep.lat.toFixed(5);
+  if(ge('inp-lon'))      ge('inp-lon').value=rep.lon.toFixed(5);
+  if(ge('inp-site-elev')){
+    ge('inp-site-elev').value=rep.siteElevFt??'';
+    ge('inp-site-elev').placeholder=rep._autoElevFt?rep._autoElevFt+' ft (auto)':'AUTO';
+  }
+  if(ge('inp-power')) ge('inp-power').value=rep.power;
+  if(ge('inp-freq'))  ge('inp-freq').value=rep.freq;
+  if(ge('inp-gain'))  ge('inp-gain').value=rep.gain;
+  if(ge('inp-cable')) ge('inp-cable').value=rep.cable;
+  if(ge('inp-rxsen')) ge('inp-rxsen').value=rep.rxSen;
+  if(ge('inp-haat'))  ge('inp-haat').value=rep.haat;
+  const lbl=ge('active-site-label');
+  if(lbl){lbl.textContent=rep.label; lbl.style.color=repColor(rep);}
   calcLinkBudget();
-  updateHeaderFooter();
-  computeTerrainCoverage();
+}
+function readSidebarIntoRep(rep){
+  const ge=id=>document.getElementById(id);
+  const nm=ge('inp-name')?.value?.trim(); if(nm) rep.label=nm;
+  const nLat=parseFloat(ge('inp-lat')?.value), nLon=parseFloat(ge('inp-lon')?.value);
+  if(!isNaN(nLat)&&nLat>=-90&&nLat<=90)  rep.lat=nLat;
+  if(!isNaN(nLon)&&nLon>=-180&&nLon<=180) rep.lon=nLon;
+  const eVal=parseFloat(ge('inp-site-elev')?.value);
+  rep.siteElevFt=isNaN(eVal)?null:eVal;
+  rep.power=parseFloat(ge('inp-power')?.value)||50;
+  rep.freq =parseFloat(ge('inp-freq')?.value)||440;
+  rep.gain =parseFloat(ge('inp-gain')?.value)||6;
+  rep.cable=parseFloat(ge('inp-cable')?.value)||2;
+  rep.rxSen=parseFloat(ge('inp-rxsen')?.value)||-120;
+  rep.haat =parseFloat(ge('inp-haat')?.value)||200;
+}
+function addRepeater(){
+  const cur=activeRep(); if(cur) readSidebarIntoRep(cur);
+  const nr=makeRepeaterObj({
+    label:`SITE-${nextRepId}`,
+    power:cur?.power??50, freq:cur?.freq??440, gain:cur?.gain??6,
+    cable:cur?.cable??2,  rxSen:cur?.rxSen??-120, haat:cur?.haat??200,
+  });
+  repeaters.push(nr); buildMarkerForRepeater(nr);
+  activeRepId=nr.id; loadRepIntoSidebar(nr); renderRepeaterList(); drawLabels(); updateHeaderFooter();
+  computeActiveRepCoverage();
+}
+function removeRepeater(id){
+  const idx=repeaters.findIndex(r=>r.id===id);
+  if(idx<0||repeaters.length<=1) return;
+  const rep=repeaters[idx];
+  rep.layers.forEach(l=>map.removeLayer(l));
+  if(rep.marker) map.removeLayer(rep.marker);
+  repeaters.splice(idx,1);
+  if(activeRepId===id){
+    activeRepId=repeaters[Math.max(0,idx-1)].id;
+    const a=activeRep(); if(a){loadRepIntoSidebar(a); drawLabels(); updateTerrainStats();}
+  }
+  renderRepeaterList(); updateHeaderFooter();
+}
+
+// ===== LINK BUDGET =====
+function calcLinkBudget(){
+  const ge=id=>document.getElementById(id);
+  const watts=parseFloat(ge('inp-power')?.value)||50;
+  const gain =parseFloat(ge('inp-gain')?.value)||6;
+  const cable=parseFloat(ge('inp-cable')?.value)||2;
+  const rxSen=parseFloat(ge('inp-rxsen')?.value)||-120;
+  const eirp =+(10*Math.log10(watts)+30+gain+2.15-cable).toFixed(1);
+  const margin=+(eirp+2.15-3-rxSen).toFixed(1);
+  const pct=Math.min(100,Math.max(0,(margin/200)*100));
+  if(ge('disp-eirp'))    ge('disp-eirp').textContent=eirp+' dBm';
+  if(ge('disp-lb-eirp')) ge('disp-lb-eirp').textContent='+'+eirp+' dBm';
+  if(ge('disp-rxsen'))   ge('disp-rxsen').textContent=rxSen+' dBm';
+  if(ge('disp-margin'))  ge('disp-margin').textContent=margin+' dB';
+  if(ge('lb-fill'))      ge('lb-fill').style.width=pct+'%';
+  if(ge('lb-label-mid')) ge('lb-label-mid').textContent=margin+' dB avail.';
+}
+function updateHeaderFooter(){
+  const rep=activeRep(); if(!rep) return;
+  document.querySelector('.coords').textContent=`${rep.lat.toFixed(4)}° N \u00a0|\u00a0 ${Math.abs(rep.lon).toFixed(4)}° W \u00a0|\u00a0 ${rep.power}W ERP`;
+  const fs=document.getElementById('footer-site'); if(fs) fs.textContent=`${rep.lat.toFixed(4)}°N ${rep.lon.toFixed(4)}°W`;
+  const fp=document.getElementById('footer-pwr');  if(fp) fp.textContent=rep.power+'W';
+  const fc=document.getElementById('footer-count'); if(fc) fc.textContent=repeaters.length;
+}
+
+// ===== BUTTONS =====
+document.getElementById('btn-apply-loc').addEventListener('click',()=>{
+  const rep=activeRep(); if(!rep) return;
+  const nLat=parseFloat(document.getElementById('inp-lat').value);
+  const nLon=parseFloat(document.getElementById('inp-lon').value);
+  if(isNaN(nLat)||isNaN(nLon)||nLat<-90||nLat>90||nLon<-180||nLon>180) return;
+  const nm=document.getElementById('inp-name')?.value?.trim(); if(nm) rep.label=nm;
+  rep.lat=nLat; rep.lon=nLon;
+  const eVal=parseFloat(document.getElementById('inp-site-elev')?.value);
+  rep.siteElevFt=isNaN(eVal)?null:eVal;
+  if(rep.siteElevFt===null&&document.getElementById('inp-site-elev')?.value==='')
+    { document.getElementById('inp-site-elev').placeholder='AUTO'; rep._autoElevFt=null; }
+  if(rep.marker) rep.marker.setLatLng([rep.lat,rep.lon]);
+  const lbl=document.getElementById('active-site-label');
+  if(lbl){lbl.textContent=rep.label;lbl.style.color=repColor(rep);}
+  map.panTo([rep.lat,rep.lon]);
+  drawLabels(); renderRepeaterList(); updateHeaderFooter();
+  computeActiveRepCoverage();
 });
-
-document.getElementById('btn-apply-loc').addEventListener('click', () => {
-  const newLat = parseFloat(document.getElementById('inp-lat').value);
-  const newLon = parseFloat(document.getElementById('inp-lon').value);
-  if (isNaN(newLat) || isNaN(newLon) ||
-      newLat < -90 || newLat > 90 || newLon < -180 || newLon > 180) return;
-  LAT = newLat; LON = newLon;
-  // Clear auto-fetched elevation placeholder when location changes
-  const elevInp = document.getElementById('inp-site-elev');
-  if (elevInp && elevInp.value === '') elevInp.placeholder = 'AUTO';
-  repMarker.setLatLng([LAT, LON]);
-  map.panTo([LAT, LON]);
-  drawLabels();
-  updateHeaderFooter();
-  computeTerrainCoverage();
+document.getElementById('btn-apply-params').addEventListener('click',()=>{
+  const rep=activeRep(); if(!rep) return;
+  readSidebarIntoRep(rep);
+  if(rep.marker) rep.marker.setLatLng([rep.lat,rep.lon]);
+  calcLinkBudget(); renderRepeaterList(); updateHeaderFooter();
+  computeActiveRepCoverage();
 });
+document.getElementById('btn-add-site').addEventListener('click', addRepeater);
 
-// Run initial link budget calc
-calcLinkBudget();
-
-computeTerrainCoverage();
+// ===== INIT =====
+const firstRep = makeRepeaterObj({label:'SITE-1', lat:30+26/60+7/3600, lon:-(98+0/60+45/3600)});
+repeaters.push(firstRep);
+activeRepId = firstRep.id;
+buildMarkerForRepeater(firstRep);
+loadRepIntoSidebar(firstRep);
+drawLabels();
+updateHeaderFooter();
+computeActiveRepCoverage();
 </script>
 
 </body>
