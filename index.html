@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UHF Repeater Propagation Map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0d0f;
+    --surface: #111518;
+    --border: #1e2a30;
+    --accent: #00e5ff;
+    --accent2: #ff6b00;
+    --accent3: #39ff14;
+    --text: #c8d8dc;
+    --muted: #4a6070;
+    --danger: #ff3d3d;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Barlow Condensed', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-shrink: 0;
+  }
+
+  .header-badge {
+    background: var(--accent);
+    color: #000;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    letter-spacing: 1px;
+  }
+
+  header h1 {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #fff;
+  }
+
+  header .coords {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    margin-left: auto;
+  }
+
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  #map {
+    flex: 1;
+  }
+
+  .sidebar {
+    width: 280px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel {
+    border-bottom: 1px solid var(--border);
+    padding: 14px 16px;
+  }
+
+  .panel-title {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .param-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 3px 0;
+    font-size: 13px;
+  }
+
+  .param-label {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .param-value {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    color: var(--accent);
+  }
+
+  .param-value.warn { color: var(--accent2); }
+  .param-value.ok   { color: var(--accent3); }
+
+  .coverage-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+  }
+
+  .legend-swatch {
+    width: 28px;
+    height: 12px;
+    border-radius: 2px;
+    border: 1px solid rgba(255,255,255,0.1);
+    flex-shrink: 0;
+  }
+
+  .legend-detail {
+    margin-left: auto;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .note-box {
+    background: rgba(255,107,0,0.08);
+    border: 1px solid rgba(255,107,0,0.25);
+    border-left: 3px solid var(--accent2);
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #a0b0b8;
+    margin: 14px 16px;
+    border-radius: 2px;
+  }
+
+  .note-box strong {
+    color: var(--accent2);
+    display: block;
+    margin-bottom: 4px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    font-family: 'Share Tech Mono', monospace;
+  }
+
+  .map-controls {
+    position: absolute;
+    top: 60px;
+    left: 10px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .ctrl-btn {
+    background: rgba(10,13,15,0.9);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    padding: 6px 10px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    backdrop-filter: blur(4px);
+    transition: all 0.15s;
+  }
+
+  .ctrl-btn:hover, .ctrl-btn.active {
+    background: rgba(0,229,255,0.1);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .link-budget-bar {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    margin: 8px 0 4px;
+    overflow: hidden;
+  }
+
+  .link-budget-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent3), var(--accent));
+    border-radius: 3px;
+    transition: width 0.3s;
+  }
+
+  .budget-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--muted);
+    font-family: 'Share Tech Mono', monospace;
+  }
+
+  /* Leaflet dark overrides */
+  .leaflet-control-zoom a {
+    background: var(--surface) !important;
+    color: var(--text) !important;
+    border-color: var(--border) !important;
+  }
+
+  .leaflet-control-zoom a:hover {
+    background: var(--border) !important;
+  }
+
+  .leaflet-tile {
+    filter: brightness(0.7) saturate(0.6) hue-rotate(180deg) invert(1);
+  }
+
+  .repeater-pulse {
+    width: 16px;
+    height: 16px;
+    background: var(--accent);
+    border-radius: 50%;
+    box-shadow: 0 0 0 0 rgba(0,229,255,0.5);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(0,229,255,0.5); }
+    70%  { box-shadow: 0 0 0 14px rgba(0,229,255,0); }
+    100% { box-shadow: 0 0 0 0 rgba(0,229,255,0); }
+  }
+
+  .site-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    background: rgba(10,13,15,0.85);
+    border: 1px solid var(--accent);
+    padding: 3px 7px;
+    white-space: nowrap;
+  }
+
+  .footer-bar {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 5px 16px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    display: flex;
+    gap: 20px;
+    flex-shrink: 0;
+  }
+
+  .footer-bar span { color: var(--accent); }
+
+  .param-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    padding: 3px 6px;
+    width: 90px;
+    text-align: right;
+    -moz-appearance: textfield;
+  }
+  .param-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: rgba(0,229,255,0.05);
+  }
+  .param-input::-webkit-inner-spin-button,
+  .param-input::-webkit-outer-spin-button { -webkit-appearance: none; }
+  .apply-btn {
+    width: 100%;
+    margin-top: 10px;
+    background: rgba(0,229,255,0.08);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    padding: 6px;
+    cursor: pointer;
+    letter-spacing: 2px;
+    transition: background 0.15s;
+  }
+  .apply-btn:hover { background: rgba(0,229,255,0.22); }
+  .input-hint {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 6px;
+    font-family: 'Share Tech Mono', monospace;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-badge">UHF</div>
+  <h1>Repeater Coverage Analysis</h1>
+  <div class="coords">30°26′7″ N &nbsp;|&nbsp; 98°0′45″ W &nbsp;|&nbsp; 50W ERP</div>
+</header>
+
+<div class="main">
+  <div id="map"></div>
+
+  <div class="sidebar">
+
+    <div class="panel">
+      <div class="panel-title">// Repeater Location</div>
+      <div class="param-row">
+        <span class="param-label">Latitude (°N)</span>
+        <input class="param-input" id="inp-lat" type="number" step="0.00001" value="30.43528">
+      </div>
+      <div class="param-row">
+        <span class="param-label">Longitude (°)</span>
+        <input class="param-input" id="inp-lon" type="number" step="0.00001" value="-98.01250">
+      </div>
+      <div class="param-row">
+        <span class="param-label">Site Elev. (ft)</span>
+        <input class="param-input" id="inp-site-elev" type="number" min="-1000" max="20000" step="1" placeholder="AUTO">
+      </div>
+      <div class="input-hint">Drag the map marker or enter coords &mdash; leave elevation blank to auto-fetch</div>
+      <button class="apply-btn" id="btn-apply-loc">↻ APPLY LOCATION</button>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">// Repeater Parameters</div>
+      <div class="param-row">
+        <span class="param-label">TX Power (W)</span>
+        <input class="param-input" id="inp-power" type="number" min="1" max="1500" step="1" value="50">
+      </div>
+      <div class="param-row">
+        <span class="param-label">Frequency (MHz)</span>
+        <input class="param-input" id="inp-freq" type="number" min="420" max="470" step="0.025" value="440">
+      </div>
+      <div class="param-row">
+        <span class="param-label">Ant. Gain (dBd)</span>
+        <input class="param-input" id="inp-gain" type="number" min="0" max="20" step="0.5" value="6">
+      </div>
+      <div class="param-row">
+        <span class="param-label">Cable Loss (dB)</span>
+        <input class="param-input" id="inp-cable" type="number" min="0" max="20" step="0.5" value="2">
+      </div>
+      <div class="param-row">
+        <span class="param-label">Rx Sensitivity (dBm)</span>
+        <input class="param-input" id="inp-rxsen" type="number" min="-140" max="-80" step="1" value="-120">
+      </div>
+      <div class="param-row">
+        <span class="param-label">Ant. Height (ft)</span>
+        <input class="param-input" id="inp-haat" type="number" min="10" max="2000" step="10" value="200">
+      </div>
+      <div class="param-row" style="margin-top:8px">
+        <span class="param-label">EIRP</span>
+        <span class="param-value ok" id="disp-eirp">55.2 dBm</span>
+      </div>
+      <button class="apply-btn" id="btn-apply-params">↻ RECALCULATE</button>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">// Link Budget</div>
+      <div class="param-row"><span class="param-label">EIRP</span><span class="param-value" id="disp-lb-eirp">+55.2 dBm</span></div>
+      <div class="param-row"><span class="param-label">Mobile Ant.</span><span class="param-value">+2.15 dBi</span></div>
+      <div class="param-row"><span class="param-label">Body/Cable Loss</span><span class="param-value warn">−3 dB</span></div>
+      <div class="param-row"><span class="param-label">Rx Sensitivity</span><span class="param-value" id="disp-rxsen">−120 dBm</span></div>
+      <div class="param-row"><span class="param-label">System Margin</span><span class="param-value ok" id="disp-margin">174.4 dB</span></div>
+      <div class="link-budget-bar">
+        <div class="link-budget-fill" id="lb-fill" style="width: 82%"></div>
+      </div>
+      <div class="budget-label"><span>0 dB</span><span id="lb-label-mid">174 dB avail.</span><span>200 dB</span></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">// Coverage Rings</div>
+      <div class="coverage-legend">
+        <div class="legend-item">
+          <div class="legend-swatch" style="background:rgba(57,255,20,0.35);border-color:rgba(57,255,20,0.6)"></div>
+          <span>Excellent S5+</span>
+          <span class="legend-detail">~15 mi</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-swatch" style="background:rgba(0,229,255,0.2);border-color:rgba(0,229,255,0.5)"></div>
+          <span>Good S3–S4</span>
+          <span class="legend-detail">~25 mi</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-swatch" style="background:rgba(255,200,0,0.15);border-color:rgba(255,200,0,0.4)"></div>
+          <span>Marginal S1–S2</span>
+          <span class="legend-detail">~40 mi</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-swatch" style="background:rgba(255,61,61,0.08);border-color:rgba(255,61,61,0.3)"></div>
+          <span>LOS Maximum</span>
+          <span class="legend-detail">~55 mi</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">// HAAT Factors</div>
+      <div class="param-row"><span class="param-label">Avg. Terrain</span><span class="param-value warn">~1,300 ft</span></div>
+      <div class="param-row"><span class="param-label">HAAT (est.)</span><span class="param-value ok">~200 ft</span></div>
+      <div class="param-row"><span class="param-label">Radio Horizon</span><span class="param-value">~55 mi</span></div>
+      <div class="param-row"><span class="param-label">K-factor</span><span class="param-value">4/3 std.</span></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">// Terrain Analysis</div>
+      <div class="param-row"><span class="param-label">Source</span><span class="param-value">SRTM (Open-Elevation)</span></div>
+      <div class="param-row"><span class="param-label">Resolution</span><span class="param-value">36 bearings × 8 pts</span></div>
+      <div class="param-row"><span class="param-label">Min LOS</span><span class="param-value" id="min-los">—</span></div>
+      <div class="param-row"><span class="param-label">Avg LOS</span><span class="param-value" id="avg-los">—</span></div>
+      <div class="param-row"><span class="param-label">Max LOS</span><span class="param-value" id="max-los">—</span></div>
+      <div class="param-row"><span class="param-label">Status</span><span class="param-value warn" id="terrain-status">COMPUTING…</span></div>
+    </div>
+
+    <div class="note-box" style="border-left-color:var(--accent);background:rgba(0,229,255,0.05)">
+      <strong>📡 LAYER TOGGLE</strong>
+      Use buttons on the map to switch between topo and satellite base layers. Topo shows terrain relief helpful for estimating shadows.
+    </div>
+
+  </div>
+</div>
+
+<div class="footer-bar">
+  <div>MODE: <span>UHF LOS ANALYSIS</span></div>
+  <div>SITE: <span id="footer-site">30.4353°N 98.0125°W</span></div>
+  <div>PWR: <span id="footer-pwr">50W</span></div>
+  <div>BAND: <span>70cm</span></div>
+  <div>DATUM: <span>WGS-84</span></div>
+</div>
+
+<script>
+let LAT = 30 + 26/60 + 7/3600;
+let LON = -(98 + 0/60 + 45/3600);
+
+const map = L.map('map', {
+  center: [LAT, LON],
+  zoom: 9,
+  zoomControl: true
+});
+
+// Topo layer
+const topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenTopoMap',
+  maxZoom: 17
+});
+
+// OSM layer
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors',
+  maxZoom: 19
+});
+
+topo.addTo(map);
+
+// Miles to meters
+const mi2m = mi => mi * 1609.34;
+
+// Coverage layers — populated by terrain analysis, never pre-drawn
+const circleLayers = [];
+
+// Map loading overlay — shown until terrain analysis completes
+const mapOverlay = document.createElement('div');
+mapOverlay.id = 'map-loading-overlay';
+mapOverlay.innerHTML = `
+  <div style="display:flex;flex-direction:column;align-items:center;gap:12px">
+    <div id="map-load-spinner" style="width:32px;height:32px;border:3px solid #1e2a30;border-top-color:#00e5ff;border-radius:50%;animation:spin 0.8s linear infinite"></div>
+    <div id="map-load-msg" style="font-family:'Share Tech Mono',monospace;font-size:12px;color:#00e5ff;letter-spacing:1px">FETCHING TERRAIN DATA…</div>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:#4a6070">Sampling elevation along 36 bearings</div>
+  </div>`;
+Object.assign(mapOverlay.style, {
+  position: 'absolute', inset: '0', zIndex: '999',
+  background: 'rgba(10,13,15,0.72)', backdropFilter: 'blur(2px)',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  pointerEvents: 'none'
+});
+document.getElementById('map').appendChild(mapOverlay);
+// spinner keyframes
+(function(){
+  const s = document.createElement('style');
+  s.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
+  document.head.appendChild(s);
+})();
+
+// Compass rose range labels — in a layer group so they can be redrawn on location change
+const labelRingsConfig = [
+  { mi: 15, color: '#39ff14' },
+  { mi: 25, color: '#00e5ff' },
+  { mi: 40, color: '#ffc800' },
+  { mi: 55, color: '#ff3d3d' },
+];
+const cardinalBearings = [0, 90, 180, 270];
+let labelGroup = L.layerGroup().addTo(map);
+
+function drawLabels() {
+  labelGroup.clearLayers();
+  labelRingsConfig.forEach(ring => {
+    cardinalBearings.forEach(bearing => {
+      const rad  = (bearing * Math.PI) / 180;
+      const dLat = (ring.mi / 69.0) * Math.cos(rad);
+      const dLon = (ring.mi / (69.0 * Math.cos(LAT * Math.PI / 180))) * Math.sin(rad);
+      L.marker([LAT + dLat, LON + dLon], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:${ring.color};background:rgba(10,13,15,0.75);padding:1px 4px;border:1px solid ${ring.color}33;white-space:nowrap">${ring.mi}mi</div>`,
+          iconAnchor: [16, 8]
+        }),
+        interactive: false
+      }).addTo(labelGroup);
+    });
+  });
+}
+drawLabels();
+
+// Repeater marker — draggable so location can be updated interactively
+const repeaterIcon = L.divIcon({
+  className: '',
+  html: `<div style="position:relative;width:20px;height:20px">
+    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:16px;height:16px;background:#00e5ff;border-radius:50%;box-shadow:0 0 0 0 rgba(0,229,255,0.5);animation:pulse 2s infinite"></div>
+    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:6px;height:6px;background:#000;border-radius:50%;z-index:2"></div>
+  </div>
+  <style>@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(0,229,255,0.5)}70%{box-shadow:0 0 0 14px rgba(0,229,255,0)}100%{box-shadow:0 0 0 0 rgba(0,229,255,0)}}</style>`,
+  iconSize: [20, 20],
+  iconAnchor: [10, 10]
+});
+
+let repMarker;
+function buildRepeaterMarker() {
+  if (repMarker) map.removeLayer(repMarker);
+  repMarker = L.marker([LAT, LON], { icon: repeaterIcon, draggable: true })
+    .addTo(map)
+    .bindPopup(() => {
+      const watts = document.getElementById('inp-power')?.value || '50';
+      const freq  = document.getElementById('inp-freq')?.value  || '440';
+      const eirp  = document.getElementById('disp-eirp')?.textContent || '55.2 dBm';
+      return `<div style="font-family:'Share Tech Mono',monospace;font-size:12px;background:#0a0d0f;color:#c8d8dc;padding:6px;border:1px solid #1e2a30;min-width:180px">
+        <div style="color:#00e5ff;font-size:13px;margin-bottom:6px">&#128225; UHF REPEATER SITE</div>
+        <div>Lat: ${LAT.toFixed(5)}&#176;</div>
+        <div>Lon: ${LON.toFixed(5)}&#176;</div>
+        <div style="margin-top:4px;color:#39ff14">TX: ${watts}W | ${freq} MHz</div>
+        <div>EIRP: ~${eirp}</div>
+      </div>`;
+    }, { className: 'dark-popup' });
+  repMarker.on('dragend', e => {
+    const p = e.target.getLatLng();
+    LAT = p.lat; LON = p.lng;
+    document.getElementById('inp-lat').value = p.lat.toFixed(5);
+    document.getElementById('inp-lon').value = p.lng.toFixed(5);
+    // Reset auto-elevation so new location gets a fresh fetch
+    const elevInp = document.getElementById('inp-site-elev');
+    if (elevInp && elevInp.value === '') elevInp.placeholder = 'AUTO';
+    updateHeaderFooter();
+    drawLabels();
+    computeTerrainCoverage();
+  });
+}
+buildRepeaterMarker();
+
+// Layer toggle buttons
+const btnTopo = document.createElement('button');
+btnTopo.className = 'ctrl-btn active';
+btnTopo.textContent = 'TOPO';
+
+const btnOSM = document.createElement('button');
+btnOSM.className = 'ctrl-btn';
+btnOSM.textContent = 'OSM';
+
+const btnSat = document.createElement('button');
+btnSat.className = 'ctrl-btn';
+btnSat.textContent = 'SAT';
+
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  attribution: '© Esri',
+  maxZoom: 18
+});
+
+const ctrlDiv = document.createElement('div');
+ctrlDiv.className = 'map-controls';
+ctrlDiv.appendChild(btnTopo);
+ctrlDiv.appendChild(btnOSM);
+ctrlDiv.appendChild(btnSat);
+document.getElementById('map').appendChild(ctrlDiv);
+
+let currentBase = topo;
+
+btnTopo.addEventListener('click', () => {
+  map.removeLayer(currentBase);
+  topo.addTo(map); currentBase = topo;
+  [btnTopo, btnOSM, btnSat].forEach(b => b.classList.remove('active'));
+  btnTopo.classList.add('active');
+});
+
+btnOSM.addEventListener('click', () => {
+  map.removeLayer(currentBase);
+  osm.addTo(map); currentBase = osm;
+  [btnTopo, btnOSM, btnSat].forEach(b => b.classList.remove('active'));
+  btnOSM.classList.add('active');
+});
+
+btnSat.addEventListener('click', () => {
+  map.removeLayer(currentBase);
+  sat.addTo(map); currentBase = sat;
+  [btnTopo, btnOSM, btnSat].forEach(b => b.classList.remove('active'));
+  btnSat.classList.add('active');
+});
+
+// Leaflet popup dark style injection
+const style = document.createElement('style');
+style.textContent = `
+  .dark-popup .leaflet-popup-content-wrapper,
+  .dark-popup .leaflet-popup-tip {
+    background: #0a0d0f;
+    color: #c8d8dc;
+    border: 1px solid #1e2a30;
+    box-shadow: 0 4px 20px rgba(0,229,255,0.15);
+  }
+`;
+document.head.appendChild(style);
+
+// ===== TERRAIN-ADJUSTED PROPAGATION =====
+// Samples elevation along 36 bearings, computes per-bearing LOS limit using
+// Earth-curvature-corrected terrain profiles (K=4/3 effective Earth), then
+// replaces the flat-earth circles with terrain-clipped polygons.
+
+const NUM_BEARINGS = 36;         // one sample bearing every 10°
+const NUM_SAMPLES  = 8;          // elevation points per bearing
+const MAX_RANGE_KM = 88.5;       // ~55 mi analysis limit
+const RX_HEIGHT_M  = 2;          // typical mobile antenna height
+const RE_EFF_KM    = 8495;       // effective Earth radius, K=4/3
+
+// Tier definitions: outer → inner (drawn in this order for correct z-stack)
+const TIER_CONFIG = [
+  { flatKm: 88.5, color: '#ff3d3d', fillAlpha: 0.06, weight: 1.5, dash: '6,4' },
+  { flatKm: 64.4, color: '#ffc800', fillAlpha: 0.10, weight: 1.5, dash: '4,3' },
+  { flatKm: 40.2, color: '#00e5ff', fillAlpha: 0.14, weight: 1.5, dash: '4,2' },
+  { flatKm: 24.1, color: '#39ff14', fillAlpha: 0.22, weight: 2,   dash: null  },
+];
+
+// Haversine destination: returns [lat, lon] at distKm on bearingDeg from origin
+function destinationPoint(lat, lon, bearingDeg, distKm) {
+  const R  = 6371;
+  const d  = distKm / R;
+  const b  = (bearingDeg % 360) * Math.PI / 180;
+  const φ1 = lat * Math.PI / 180;
+  const λ1 = lon * Math.PI / 180;
+  const φ2 = Math.asin(Math.sin(φ1)*Math.cos(d) + Math.cos(φ1)*Math.sin(d)*Math.cos(b));
+  const λ2 = λ1 + Math.atan2(Math.sin(b)*Math.sin(d)*Math.cos(φ1), Math.cos(d) - Math.sin(φ1)*Math.sin(φ2));
+  return [φ2 * 180/Math.PI, λ2 * 180/Math.PI];
+}
+
+// Earth bulge (m) at intermediate distance d_km on a path of total D_km, K=4/3
+// Formula: h = d*(D-d) / (2*Re_eff)  [km² / km → km → *1000 → m]
+function earthBulge(d_km, D_km) {
+  return (d_km * (D_km - d_km)) / (2 * RE_EFF_KM) * 1000;
+}
+
+// Returns true if TX (at txMSL + antH metres MSL) has clear LOS to profile[targetIdx].
+// Checks every intermediate sample in profile[] using curvature-corrected terrain heights.
+function checkLOS(txMSL, antH, profile, targetIdx) {
+  const target = profile[targetIdx];
+  const rxMSL  = target.elevM + RX_HEIGHT_M;
+  const D      = target.distKm;
+  const txH    = txMSL + antH;
+  for (let j = 0; j < targetIdx; j++) {
+    const pt   = profile[j];
+    const d    = pt.distKm;
+    const obst = pt.elevM + earthBulge(d, D);      // terrain + curvature bulge
+    const los  = txH + (rxMSL - txH) * (d / D);   // straight LOS ray height
+    if (obst > los) return false;
+  }
+  return true;
+}
+
+function setTerrainStatus(text, cls) {
+  const el = document.getElementById('terrain-status');
+  if (!el) return;
+  el.textContent = text;
+  el.className   = 'param-value' + (cls ? ' ' + cls : '');
+}
+
+function setOverlayMsg(text) {
+  const el = document.getElementById('map-load-msg');
+  if (el) el.textContent = text;
+}
+
+function hideOverlay() {
+  const ov = document.getElementById('map-loading-overlay');
+  if (ov) ov.style.display = 'none';
+}
+
+function showOverlay(msg) {
+  const ov = document.getElementById('map-loading-overlay');
+  if (ov) ov.style.display = 'flex';
+  setOverlayMsg(msg || 'FETCHING TERRAIN DATA…');
+}
+
+// Batch elevation fetch — Open-Elevation POST (primary) → Open-Meteo GET (fallback)
+async function fetchElevationBatch(locations) {
+  try {
+    const r = await fetch('https://api.open-elevation.com/api/v1/lookup', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body:    JSON.stringify({ locations }),
+      signal:  AbortSignal.timeout(25000)
+    });
+    if (r.ok) {
+      const d = await r.json();
+      if (d.results && d.results.length === locations.length)
+        return d.results.map(x => x.elevation);
+    }
+  } catch (_) { /* fall through to backup */ }
+
+  // Fallback: Open-Meteo elevation API (batched GETs, ≤100 pts each)
+  const elevs = [];
+  for (let i = 0; i < locations.length; i += 100) {
+    const chunk = locations.slice(i, i + 100);
+    const lats  = chunk.map(p => p.latitude.toFixed(5)).join(',');
+    const lons  = chunk.map(p => p.longitude.toFixed(5)).join(',');
+    const r     = await fetch(
+      `https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lons}`,
+      { signal: AbortSignal.timeout(15000) }
+    );
+    if (!r.ok) throw new Error(`Open-Meteo elevation HTTP ${r.status}`);
+    const d = await r.json();
+    elevs.push(...d.elevation);
+  }
+  return elevs;
+}
+
+async function computeTerrainCoverage() {
+  showOverlay('FETCHING TERRAIN DATA…');
+  setTerrainStatus('FETCHING SITE ELEVATION…', 'warn');
+  setOverlayMsg('FETCHING SITE ELEVATION…');
+  try {
+    // Antenna height from editable input (ft → m)
+    const antHeightM = (parseFloat(document.getElementById('inp-haat')?.value) || 200) / 3.281;
+    // 1. Actual repeater site elevation — use user-supplied value if present, else fetch
+    const userElevFt = parseFloat(document.getElementById('inp-site-elev')?.value);
+    let txMSL;
+    if (!isNaN(userElevFt)) {
+      txMSL = userElevFt / 3.281;
+    } else {
+      [txMSL] = await fetchElevationBatch([{ latitude: LAT, longitude: LON }]);
+      const elevInput = document.getElementById('inp-site-elev');
+      if (elevInput) elevInput.placeholder = Math.round(txMSL * 3.281) + ' ft (auto)';
+    }
+
+    // 2. Build bearing × sample point grid
+    const locations = [];
+    const grid      = [];  // grid[b][s] = index into locations[]
+    for (let b = 0; b < NUM_BEARINGS; b++) {
+      const bearing = (b * 360) / NUM_BEARINGS;
+      grid[b] = [];
+      for (let s = 1; s <= NUM_SAMPLES; s++) {
+        const distKm     = (s / NUM_SAMPLES) * MAX_RANGE_KM;
+        const [lat, lon] = destinationPoint(LAT, LON, bearing, distKm);
+        grid[b][s - 1]   = locations.length;
+        locations.push({ latitude: lat, longitude: lon });
+      }
+    }
+
+    setTerrainStatus(`SAMPLING ${locations.length} TERRAIN PTS…`, 'warn');
+    setOverlayMsg(`SAMPLING ${locations.length} ELEVATION POINTS…`);
+
+    // 3. Batch-fetch all terrain elevations
+    const elevs = await fetchElevationBatch(locations);
+
+    // 4. Per-bearing: find first blocked sample → that is the LOS limit
+    const losRanges = [];
+    for (let b = 0; b < NUM_BEARINGS; b++) {
+      const profile = grid[b].map((idx, s) => ({
+        distKm: ((s + 1) / NUM_SAMPLES) * MAX_RANGE_KM,
+        elevM:  elevs[idx]
+      }));
+      let losKm = MAX_RANGE_KM;   // assume clear until proven blocked
+      for (let s = 0; s < NUM_SAMPLES; s++) {
+        if (!checkLOS(txMSL, antHeightM, profile, s)) {
+          losKm = s > 0 ? profile[s - 1].distKm : profile[0].distKm * 0.5;
+          break;
+        }
+      }
+      losRanges.push(losKm);
+    }
+
+    // 5. Replace flat circles/polygons with terrain-adjusted polygons
+    circleLayers.forEach(l => map.removeLayer(l));
+    circleLayers.length = 0;
+
+    TIER_CONFIG.forEach(tier => {
+      const pts = [];
+      for (let b = 0; b < NUM_BEARINGS; b++) {
+        const rangeKm = Math.min(tier.flatKm, losRanges[b]);
+        pts.push(destinationPoint(LAT, LON, (b * 360) / NUM_BEARINGS, rangeKm));
+      }
+      const lyr = L.polygon(pts, {
+        color:        tier.color,
+        weight:       tier.weight,
+        dashArray:    tier.dash,
+        fillColor:    tier.color,
+        fillOpacity:  tier.fillAlpha,
+        smoothFactor: 2,
+        interactive:  false
+      }).addTo(map);
+      circleLayers.push(lyr);
+    });
+
+    // 6. Update sidebar stats
+    const toMi = km => (km / 1.60934).toFixed(1);
+    const ge   = id => document.getElementById(id);
+    if (ge('min-los')) ge('min-los').textContent = toMi(Math.min(...losRanges)) + ' mi';
+    if (ge('avg-los')) ge('avg-los').textContent = toMi(losRanges.reduce((a, b) => a + b, 0) / NUM_BEARINGS) + ' mi';
+    if (ge('max-los')) ge('max-los').textContent = toMi(Math.max(...losRanges)) + ' mi';
+
+    setTerrainStatus('TOPO-ADJUSTED ✓', 'ok');
+    hideOverlay();
+
+  } catch (err) {
+    console.error('Terrain coverage failed:', err);
+    setTerrainStatus('API UNAVAILABLE — FLAT-EARTH', 'warn');
+    // Draw flat-earth fallback circles so the map isn't empty
+    const flatConfig = [
+      { flatKm: 88.5, color: '#ff3d3d', fillAlpha: 0.06, weight: 1.5, dash: '6,4' },
+      { flatKm: 64.4, color: '#ffc800', fillAlpha: 0.10, weight: 1.5, dash: '4,3' },
+      { flatKm: 40.2, color: '#00e5ff', fillAlpha: 0.14, weight: 1.5, dash: '4,2' },
+      { flatKm: 24.1, color: '#39ff14', fillAlpha: 0.22, weight: 2,   dash: null  },
+    ];
+    circleLayers.forEach(l => map.removeLayer(l)); circleLayers.length = 0;
+    flatConfig.forEach(tier => {
+      const lyr = L.circle([LAT, LON], {
+        radius: tier.flatKm * 1000,
+        color: tier.color, weight: tier.weight, dashArray: tier.dash,
+        fillColor: tier.color, fillOpacity: tier.fillAlpha, interactive: false
+      }).addTo(map);
+      circleLayers.push(lyr);
+    });
+    hideOverlay();
+  }
+}
+
+// ===== EDITABLE PARAMETERS & LOCATION =====
+function calcLinkBudget() {
+  const watts   = parseFloat(document.getElementById('inp-power').value) || 50;
+  const gainDbd = parseFloat(document.getElementById('inp-gain').value)  || 6;
+  const cable   = parseFloat(document.getElementById('inp-cable').value) || 2;
+  const rxSen   = parseFloat(document.getElementById('inp-rxsen').value) || -120;
+  const pDbm    = 10 * Math.log10(watts) + 30;
+  const gDbi    = gainDbd + 2.15;
+  const eirp    = +(pDbm + gDbi - cable).toFixed(1);
+  const margin  = +(eirp + 2.15 - 3 - rxSen).toFixed(1);
+  const pct     = Math.min(100, Math.max(0, (margin / 200) * 100));
+
+  document.getElementById('disp-eirp').textContent      = eirp + ' dBm';
+  document.getElementById('disp-lb-eirp').textContent   = '+' + eirp + ' dBm';
+  document.getElementById('disp-rxsen').textContent     = rxSen + ' dBm';
+  document.getElementById('disp-margin').textContent    = margin + ' dB';
+  document.getElementById('lb-fill').style.width        = pct + '%';
+  document.getElementById('lb-label-mid').textContent   = margin + ' dB avail.';
+}
+
+function updateHeaderFooter() {
+  const watts = document.getElementById('inp-power')?.value || '50';
+  document.querySelector('.coords').textContent =
+    `${LAT.toFixed(4)}° N \u00a0|\u00a0 ${Math.abs(LON).toFixed(4)}° W \u00a0|\u00a0 ${watts}W ERP`;
+  const fs = document.getElementById('footer-site');
+  if (fs) fs.textContent = `${LAT.toFixed(4)}°N ${LON.toFixed(4)}°W`;
+  const fp = document.getElementById('footer-pwr');
+  if (fp) fp.textContent = watts + 'W';
+}
+
+document.getElementById('btn-apply-params').addEventListener('click', () => {
+  calcLinkBudget();
+  updateHeaderFooter();
+  computeTerrainCoverage();
+});
+
+document.getElementById('btn-apply-loc').addEventListener('click', () => {
+  const newLat = parseFloat(document.getElementById('inp-lat').value);
+  const newLon = parseFloat(document.getElementById('inp-lon').value);
+  if (isNaN(newLat) || isNaN(newLon) ||
+      newLat < -90 || newLat > 90 || newLon < -180 || newLon > 180) return;
+  LAT = newLat; LON = newLon;
+  // Clear auto-fetched elevation placeholder when location changes
+  const elevInp = document.getElementById('inp-site-elev');
+  if (elevInp && elevInp.value === '') elevInp.placeholder = 'AUTO';
+  repMarker.setLatLng([LAT, LON]);
+  map.panTo([LAT, LON]);
+  drawLabels();
+  updateHeaderFooter();
+  computeTerrainCoverage();
+});
+
+// Run initial link budget calc
+calcLinkBudget();
+
+computeTerrainCoverage();
+</script>
+
+</body>
+</html>
