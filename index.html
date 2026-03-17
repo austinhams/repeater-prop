@@ -379,11 +379,11 @@
       </div>
       <div class="param-row">
         <span class="param-label">Latitude (°N)</span>
-        <input class="param-input" id="inp-lat" type="number" step="0.00001" value="" placeholder="e.g. 30.43528">
+        <input class="param-input" id="inp-lat" type="number" step="0.00001" value="30.38816" placeholder="e.g. 30.43528">
       </div>
       <div class="param-row">
         <span class="param-label">Longitude (°)</span>
-        <input class="param-input" id="inp-lon" type="number" step="0.00001" value="" placeholder="e.g. -98.0125">
+        <input class="param-input" id="inp-lon" type="number" step="0.00001" value="-97.72824" placeholder="e.g. -98.0125">
       </div>
       <div class="param-row">
         <span class="param-label">Site Elev. (ft)</span>
@@ -905,12 +905,16 @@ document.getElementById('btn-apply-params').addEventListener('click',()=>{
 document.getElementById('btn-add-site').addEventListener('click', addRepeater);
 
 // ===== INIT =====
-const firstRep = makeRepeaterObj({label:'SITE-1'});
+const firstRep = makeRepeaterObj({label:'SITE-1', lat:30.388157263282938, lon:-97.7282374339027});
 repeaters.push(firstRep);
 activeRepId = firstRep.id;
+buildMarkerForRepeater(firstRep);
 loadRepIntoSidebar(firstRep);
 renderRepeaterList();
+drawLabels();
 updateHeaderFooter();
+map.setView([firstRep.lat, firstRep.lon], 9);
+computeActiveRepCoverage();
 </script>
 
 </body>
