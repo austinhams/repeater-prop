@@ -357,7 +357,7 @@
 <header>
   <div class="header-badge">UHF</div>
   <h1>Repeater Coverage Analysis</h1>
-  <div class="coords">30°26′7″ N &nbsp;|&nbsp; 98°0′45″ W &nbsp;|&nbsp; 50W ERP</div>
+  <div class="coords">-- NO SITE ACTIVE --</div>
 </header>
 
 <div class="main">
@@ -379,11 +379,11 @@
       </div>
       <div class="param-row">
         <span class="param-label">Latitude (°N)</span>
-        <input class="param-input" id="inp-lat" type="number" step="0.00001" value="30.43528">
+        <input class="param-input" id="inp-lat" type="number" step="0.00001" value="" placeholder="e.g. 30.43528">
       </div>
       <div class="param-row">
         <span class="param-label">Longitude (°)</span>
-        <input class="param-input" id="inp-lon" type="number" step="0.00001" value="-98.01250">
+        <input class="param-input" id="inp-lon" type="number" step="0.00001" value="" placeholder="e.g. -98.0125">
       </div>
       <div class="param-row">
         <span class="param-label">Site Elev. (ft)</span>
@@ -494,10 +494,11 @@
 <div class="footer-bar">
   <div>MODE: <span>UHF LOS ANALYSIS</span></div>
   <div>SITES: <span id="footer-count">1</span></div>
-  <div>ACTIVE: <span id="footer-site">30.4353°N 98.0125°W</span></div>
+  <div>ACTIVE: <span id="footer-site">-- NO SITE --</span></div>
   <div>PWR: <span id="footer-pwr">50W</span></div>
   <div>BAND: <span>70cm</span></div>
   <div>DATUM: <span>WGS-84</span></div>
+  <div style="margin-left:auto;opacity:0.5">Made with 🍺 by <a href="https://github.com/austinhams/repeater-prop">KJ5DJC</a> in Austin, TX</div>
 </div>
 
 <script>
@@ -516,13 +517,9 @@ const TIER_CONFIG  = [
 const TIER_COLORS = ['#ff3d3d','#ffc800','#00e5ff','#39ff14'];
 const REP_PALETTE = ['#00e5ff','#ff6b00','#39ff14','#bf5fff','#ffee00','#ff69b4','#ff3d3d','#00ff99'];
 
-// Dummy LAT/LON so inline init values still resolve before first render
-let LAT = 30 + 26/60 + 7/3600;
-let LON = -(98 + 0/60 + 45/3600);
-
 const map = L.map('map', {
-  center: [LAT, LON],
-  zoom: 9,
+  center: [39.5, -98.35],
+  zoom: 4,
   zoomControl: true
 });
 
@@ -626,7 +623,7 @@ function makeRepeaterObj(opts={}){
   const id=nextRepId++;
   return {
     id, label:opts.label??`SITE-${id}`,
-    lat:opts.lat??30.43528, lon:opts.lon??-98.01250,
+    lat:opts.lat??null, lon:opts.lon??null,
     siteElevFt:opts.siteElevFt??null, _autoElevFt:null,
     power:opts.power??50, freq:opts.freq??440, gain:opts.gain??6,
     cable:opts.cable??2, rxSen:opts.rxSen??-120, haat:opts.haat??200,
@@ -648,6 +645,7 @@ function makeMarkerIcon(color){
   });
 }
 function buildMarkerForRepeater(rep){
+  if(rep.lat===null||rep.lon===null) return;
   if(rep.marker) map.removeLayer(rep.marker);
   const color=repColor(rep);
   rep.marker=L.marker([rep.lat,rep.lon],{icon:makeMarkerIcon(color),draggable:true})
@@ -670,7 +668,7 @@ function buildMarkerForRepeater(rep){
 let labelGroup=L.layerGroup().addTo(map);
 function drawLabels(){
   labelGroup.clearLayers();
-  const rep=activeRep(); if(!rep) return;
+  const rep=activeRep(); if(!rep||rep.lat===null||rep.lon===null) return;
   [{mi:15,color:'#39ff14'},{mi:25,color:'#00e5ff'},{mi:40,color:'#ffc800'},{mi:55,color:'#ff3d3d'}].forEach(ring=>{
     [0,90,180,270].forEach(bearing=>{
       const rad=bearing*Math.PI/180;
@@ -739,7 +737,7 @@ async function computeCoverageForRepeater(rep){
 }
 
 async function computeActiveRepCoverage(repOverride){
-  const rep=repOverride||activeRep(); if(!rep) return;
+  const rep=repOverride||activeRep(); if(!rep||rep.lat===null||rep.lon===null) return;
   showOverlay(`COMPUTING ${rep.label}…`);
   setTerrainStatus('COMPUTING…','warn');
   setOverlayMsg(`FETCHING ELEVATION FOR ${rep.label}…`);
@@ -773,7 +771,7 @@ function renderRepeaterList(){
       <div class="rep-color-dot" style="background:${color};box-shadow:0 0 5px ${color}90"></div>
       <div class="rep-info">
         <div class="rep-name">${rep.label}</div>
-        <div class="rep-coords">${rep.lat.toFixed(3)}°&nbsp;${rep.lon.toFixed(3)}°&nbsp;&nbsp;${rep.power}W</div>
+        <div class="rep-coords">${rep.lat!==null?rep.lat.toFixed(3)+'°':'--'}${rep.lon!==null?'&nbsp;'+rep.lon.toFixed(3)+'°':''}&nbsp;&nbsp;${rep.power}W</div>
       </div>
       ${repeaters.length>1?`<button class="rep-delete-btn" title="Remove">✕</button>`:''}`.trim();
     row.querySelector('.rep-info').addEventListener('click',()=>setActiveRepeater(rep.id));
@@ -787,13 +785,13 @@ function setActiveRepeater(id){
   activeRepId=id; renderRepeaterList();
   const rep=activeRep(); if(!rep) return;
   loadRepIntoSidebar(rep); drawLabels(); updateTerrainStats(); updateHeaderFooter();
-  map.panTo([rep.lat,rep.lon]);
+  if(rep.lat!==null&&rep.lon!==null) map.panTo([rep.lat,rep.lon]);
 }
 function loadRepIntoSidebar(rep){
   const ge=id=>document.getElementById(id);
   if(ge('inp-name'))     ge('inp-name').value=rep.label;
-  if(ge('inp-lat'))      ge('inp-lat').value=rep.lat.toFixed(5);
-  if(ge('inp-lon'))      ge('inp-lon').value=rep.lon.toFixed(5);
+  if(ge('inp-lat'))      ge('inp-lat').value=rep.lat!==null?rep.lat.toFixed(5):'';
+  if(ge('inp-lon'))      ge('inp-lon').value=rep.lon!==null?rep.lon.toFixed(5):'';
   if(ge('inp-site-elev')){
     ge('inp-site-elev').value=rep.siteElevFt??'';
     ge('inp-site-elev').placeholder=rep._autoElevFt?rep._autoElevFt+' ft (auto)':'AUTO';
@@ -867,8 +865,13 @@ function calcLinkBudget(){
 }
 function updateHeaderFooter(){
   const rep=activeRep(); if(!rep) return;
-  document.querySelector('.coords').textContent=`${rep.lat.toFixed(4)}° N \u00a0|\u00a0 ${Math.abs(rep.lon).toFixed(4)}° W \u00a0|\u00a0 ${rep.power}W ERP`;
-  const fs=document.getElementById('footer-site'); if(fs) fs.textContent=`${rep.lat.toFixed(4)}°N ${rep.lon.toFixed(4)}°W`;
+  if(rep.lat===null||rep.lon===null){
+    document.querySelector('.coords').textContent='-- NO SITE ACTIVE --';
+    const fs=document.getElementById('footer-site'); if(fs) fs.textContent='-- NO SITE --';
+  } else {
+    document.querySelector('.coords').textContent=`${rep.lat.toFixed(4)}° N \u00a0|\u00a0 ${Math.abs(rep.lon).toFixed(4)}° W \u00a0|\u00a0 ${rep.power}W ERP`;
+    const fs=document.getElementById('footer-site'); if(fs) fs.textContent=`${rep.lat.toFixed(4)}°N ${rep.lon.toFixed(4)}°W`;
+  }
   const fp=document.getElementById('footer-pwr');  if(fp) fp.textContent=rep.power+'W';
   const fc=document.getElementById('footer-count'); if(fc) fc.textContent=repeaters.length;
 }
@@ -885,7 +888,7 @@ document.getElementById('btn-apply-loc').addEventListener('click',()=>{
   rep.siteElevFt=isNaN(eVal)?null:eVal;
   if(rep.siteElevFt===null&&document.getElementById('inp-site-elev')?.value==='')
     { document.getElementById('inp-site-elev').placeholder='AUTO'; rep._autoElevFt=null; }
-  if(rep.marker) rep.marker.setLatLng([rep.lat,rep.lon]);
+  if(rep.marker) rep.marker.setLatLng([rep.lat,rep.lon]); else buildMarkerForRepeater(rep);
   const lbl=document.getElementById('active-site-label');
   if(lbl){lbl.textContent=rep.label;lbl.style.color=repColor(rep);}
   map.panTo([rep.lat,rep.lon]);
@@ -902,14 +905,12 @@ document.getElementById('btn-apply-params').addEventListener('click',()=>{
 document.getElementById('btn-add-site').addEventListener('click', addRepeater);
 
 // ===== INIT =====
-const firstRep = makeRepeaterObj({label:'SITE-1', lat:30+26/60+7/3600, lon:-(98+0/60+45/3600)});
+const firstRep = makeRepeaterObj({label:'SITE-1'});
 repeaters.push(firstRep);
 activeRepId = firstRep.id;
-buildMarkerForRepeater(firstRep);
 loadRepIntoSidebar(firstRep);
-drawLabels();
+renderRepeaterList();
 updateHeaderFooter();
-computeActiveRepCoverage();
 </script>
 
 </body>
