@@ -483,6 +483,16 @@
       <div class="param-row"><span class="param-label">Status</span><span class="param-value warn" id="terrain-status">COMPUTING…</span></div>
     </div>
 
+    <div class="panel">
+      <div class="panel-title">// Config I/O</div>
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <button class="apply-btn" id="btn-export-json" style="margin-top:0;flex:1">&#8595; EXPORT JSON</button>
+        <button class="apply-btn" id="btn-import-json" style="margin-top:0;flex:1;border-color:var(--accent3);color:var(--accent3);background:rgba(57,255,20,0.08)">&#8593; IMPORT JSON</button>
+      </div>
+      <input type="file" id="inp-import-file" accept=".json,application/json" style="display:none">
+      <div class="input-hint">Export saves all sites &mdash; Import replaces all current sites.</div>
+    </div>
+
     <div class="note-box" style="border-left-color:var(--accent);background:rgba(0,229,255,0.05)">
       <strong>📡 LAYER TOGGLE</strong>
       Use buttons on the map to switch between topo and satellite base layers. Topo shows terrain relief helpful for estimating shadows.
@@ -903,6 +913,82 @@ document.getElementById('btn-apply-params').addEventListener('click',()=>{
   computeActiveRepCoverage();
 });
 document.getElementById('btn-add-site').addEventListener('click', addRepeater);
+
+// ===== CONFIG I/O =====
+function exportConfigJSON(){
+  const data={
+    version:1,
+    activeRepId,
+    nextRepId,
+    repeaters:repeaters.map(r=>({
+      id:r.id, label:r.label, lat:r.lat, lon:r.lon,
+      siteElevFt:r.siteElevFt, power:r.power, freq:r.freq,
+      gain:r.gain, cable:r.cable, rxSen:r.rxSen, haat:r.haat
+    }))
+  };
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download='repeater-config.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+function importConfigJSON(file){
+  const reader=new FileReader();
+  reader.onload=async e=>{
+    try{
+      const data=JSON.parse(e.target.result);
+      if(!Array.isArray(data.repeaters)||data.repeaters.length===0) throw new Error('No repeaters found in file');
+      repeaters.forEach(r=>{
+        r.layers.forEach(l=>map.removeLayer(l));
+        if(r.marker) map.removeLayer(r.marker);
+      });
+      repeaters.length=0;
+      labelGroup.clearLayers();
+      nextRepId=(data.nextRepId&&data.nextRepId>0)
+        ?data.nextRepId
+        :Math.max(...data.repeaters.map(r=>r.id||0))+1;
+      data.repeaters.forEach(rd=>{
+        const rep={
+          id:rd.id??nextRepId++,
+          label:typeof rd.label==='string'?rd.label:`SITE-${rd.id}`,
+          lat:typeof rd.lat==='number'?rd.lat:null,
+          lon:typeof rd.lon==='number'?rd.lon:null,
+          siteElevFt:typeof rd.siteElevFt==='number'?rd.siteElevFt:null,
+          _autoElevFt:null,
+          power:rd.power??50, freq:rd.freq??440,
+          gain:rd.gain??6,   cable:rd.cable??2,
+          rxSen:rd.rxSen??-120, haat:rd.haat??200,
+          layers:[], marker:null, losRanges:null,
+        };
+        repeaters.push(rep);
+        buildMarkerForRepeater(rep);
+      });
+      activeRepId=data.activeRepId??repeaters[0]?.id;
+      const active=activeRep();
+      if(active){
+        loadRepIntoSidebar(active);
+        if(active.lat!==null&&active.lon!==null) map.setView([active.lat,active.lon],9);
+      }
+      renderRepeaterList(); drawLabels(); updateHeaderFooter();
+      showOverlay('IMPORTING TERRAIN…');
+      await Promise.all(repeaters.map(rep=>computeCoverageForRepeater(rep)));
+      if(active) updateTerrainStats();
+      hideOverlay();
+    } catch(err){
+      hideOverlay();
+      alert('Import failed: '+err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+document.getElementById('btn-export-json').addEventListener('click', exportConfigJSON);
+document.getElementById('btn-import-json').addEventListener('click',()=>{
+  document.getElementById('inp-import-file').value=''; // reset so re-importing same file triggers change
+  document.getElementById('inp-import-file').click();
+});
+document.getElementById('inp-import-file').addEventListener('change',e=>{
+  const f=e.target.files[0]; if(f) importConfigJSON(f);
+});
 
 // ===== INIT =====
 const firstRep = makeRepeaterObj({label:'SITE-1', lat:30.388157263282938, lon:-97.7282374339027});
