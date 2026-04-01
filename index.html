@@ -621,27 +621,51 @@ function checkLOS(txMSL,antH,profile,targetIdx){
   }
   return true;
 }
-async function fetchElevationBatch(locations){
-  const elevs=[];
-  for(let i=0;i<locations.length;i+=100){
-    const chunk=locations.slice(i,i+100);
-    const url=`https://api.open-meteo.com/v1/elevation?latitude=${chunk.map(p=>p.latitude.toFixed(5)).join(',')}&longitude=${chunk.map(p=>p.longitude.toFixed(5)).join(',')}`;
-    let delay=1000;
-    for(let attempt=0;attempt<4;attempt++){
-      const r=await fetch(url,{signal:AbortSignal.timeout(15000)});
-      if(r.status===429){
-        await new Promise(res=>setTimeout(res,delay));
-        delay*=2;
-        continue;
-      }
-      if(!r.ok) throw new Error(`Open-Meteo ${r.status}`);
-      elevs.push(...(await r.json()).elevation);
-      break;
+// ===== ELEVATION API — rate-limited, cached =====
+let _lastElevReq = 0;
+const ELEV_MIN_GAP_MS = 1100; // max ~1 req/sec
+const elevCache = new Map(); // "lat5,lon5" -> elevation (m)
+
+async function _throttledElevFetch(url){
+  const now = Date.now();
+  const wait = ELEV_MIN_GAP_MS - (now - _lastElevReq);
+  if(wait > 0) await new Promise(res=>setTimeout(res, wait));
+  _lastElevReq = Date.now();
+  let delay = 2000;
+  for(let attempt=0; attempt<5; attempt++){
+    const r = await fetch(url, {signal:AbortSignal.timeout(15000)});
+    if(r.status===429){
+      await new Promise(res=>setTimeout(res, delay));
+      delay *= 2;
+      continue;
     }
-    if(elevs.length<i+chunk.length) throw new Error('Open-Meteo rate limit — try again shortly');
-    if(i+100<locations.length) await new Promise(res=>setTimeout(res,300));
+    if(!r.ok) throw new Error(`Open-Meteo ${r.status}`);
+    return await r.json();
   }
-  return elevs;
+  throw new Error('Open-Meteo rate limit — too many requests');
+}
+
+async function fetchElevationBatch(locations){
+  const result = new Array(locations.length);
+  const missing = []; // indices into locations that are not cached
+  locations.forEach((p,i)=>{
+    const k=`${p.latitude.toFixed(4)},${p.longitude.toFixed(4)}`;
+    if(elevCache.has(k)) result[i]=elevCache.get(k);
+    else missing.push(i);
+  });
+  for(let ci=0; ci<missing.length; ci+=100){
+    const slice = missing.slice(ci, ci+100);
+    const lats = slice.map(i=>locations[i].latitude.toFixed(5)).join(',');
+    const lons = slice.map(i=>locations[i].longitude.toFixed(5)).join(',');
+    const data = await _throttledElevFetch(`https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lons}`);
+    slice.forEach((origIdx, j)=>{
+      const elev = data.elevation[j];
+      result[origIdx] = elev;
+      const k=`${locations[origIdx].latitude.toFixed(4)},${locations[origIdx].longitude.toFixed(4)}`;
+      elevCache.set(k, elev);
+    });
+  }
+  return result;
 }
 
 // ===== REPEATER DATA MODEL =====
