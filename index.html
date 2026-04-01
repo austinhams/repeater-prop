@@ -475,7 +475,7 @@
 
     <div class="panel">
       <div class="panel-title">// Terrain Analysis</div>
-      <div class="param-row"><span class="param-label">Source</span><span class="param-value">SRTM (Open-Elevation)</span></div>
+      <div class="param-row"><span class="param-label">Source</span><span class="param-value">SRTM (Open-Meteo)</span></div>
       <div class="param-row"><span class="param-label">Resolution</span><span class="param-value">36 bearings × 8 pts</span></div>
       <div class="param-row"><span class="param-label">Min LOS</span><span class="param-value" id="min-los">—</span></div>
       <div class="param-row"><span class="param-label">Avg LOS</span><span class="param-value" id="avg-los">—</span></div>
@@ -608,10 +608,6 @@ function checkLOS(txMSL,antH,profile,targetIdx){
   return true;
 }
 async function fetchElevationBatch(locations){
-  try{
-    const r=await fetch('https://api.open-elevation.com/api/v1/lookup',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({locations}),signal:AbortSignal.timeout(25000)});
-    if(r.ok){const d=await r.json(); if(d.results?.length===locations.length) return d.results.map(x=>x.elevation);}
-  }catch(_){}
   const elevs=[];
   for(let i=0;i<locations.length;i+=100){
     const chunk=locations.slice(i,i+100);
