@@ -493,6 +493,20 @@
       <div class="input-hint">Export saves all sites &mdash; Import replaces all current sites.</div>
     </div>
 
+    <div class="panel">
+      <div class="panel-title">// County Overlay</div>
+      <div id="county-list" style="margin-bottom:6px"></div>
+      <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px">
+        <input class="param-input" id="inp-county-name" type="text" placeholder="County" style="flex:1;min-width:0">
+        <input class="param-input" id="inp-county-state" type="text" placeholder="State" style="width:52px">
+        <button class="apply-btn" id="btn-add-county" style="margin-top:0;width:40px;padding:0">ADD</button>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="apply-btn" id="btn-clear-all-counties" style="margin-top:0;flex:1;border-color:var(--accent2);color:var(--accent2);background:rgba(255,107,0,0.08)">&#10005; CLEAR ALL</button>
+      </div>
+      <div class="param-row" style="margin-top:6px"><span class="param-label">Status</span><span class="param-value" id="county-status">—</span></div>
+    </div>
+
     <div class="note-box" style="border-left-color:var(--accent);background:rgba(0,229,255,0.05)">
       <strong>📡 LAYER TOGGLE</strong>
       Use buttons on the map to switch between topo and satellite base layers. Topo shows terrain relief helpful for estimating shadows.
@@ -997,6 +1011,81 @@ drawLabels();
 updateHeaderFooter();
 map.setView([firstRep.lat, firstRep.lon], 9);
 computeActiveRepCoverage();
+
+// ===== COUNTY OVERLAY =====
+const COUNTY_COLORS = ['#ff6b00','#00e5ff','#39ff14','#ff3dff','#ffe600','#ff3d3d','#00ffb8','#a78bfa'];
+let countyEntries = []; // {id, label, layer}
+let nextCountyId  = 1;
+
+function renderCountyList(){
+  const el = document.getElementById('county-list');
+  el.innerHTML = '';
+  countyEntries.forEach(entry=>{
+    const row = document.createElement('div');
+    row.style.cssText='display:flex;align-items:center;gap:4px;margin-bottom:3px';
+    row.innerHTML=`<span style="display:inline-block;width:10px;height:10px;background:${entry.color};flex-shrink:0;border-radius:1px"></span>
+      <span style="flex:1;font-family:\'Share Tech Mono\',monospace;font-size:11px;color:#cfd8dc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${entry.label}">${entry.label}</span>
+      <button data-cid="${entry.id}" style="background:none;border:1px solid rgba(255,107,0,0.5);color:var(--accent2);font-size:9px;cursor:pointer;padding:1px 5px;font-family:\'Share Tech Mono\',monospace;line-height:1.4">✕</button>`;
+    row.querySelector('button').addEventListener('click',()=>removeCounty(entry.id));
+    el.appendChild(row);
+  });
+}
+
+function removeCounty(id){
+  const idx = countyEntries.findIndex(e=>e.id===id);
+  if(idx===-1) return;
+  map.removeLayer(countyEntries[idx].layer);
+  countyEntries.splice(idx,1);
+  renderCountyList();
+  const statusEl=document.getElementById('county-status');
+  statusEl.textContent = countyEntries.length ? `${countyEntries.length} LOADED` : '—';
+  statusEl.className = countyEntries.length ? 'param-value ok' : 'param-value';
+}
+
+function clearAllCounties(){
+  countyEntries.forEach(e=>map.removeLayer(e.layer));
+  countyEntries=[];
+  renderCountyList();
+  document.getElementById('county-status').textContent='—';
+  document.getElementById('county-status').className='param-value';
+}
+
+async function addCounty(){
+  const countyName = document.getElementById('inp-county-name').value.trim();
+  const stateName  = document.getElementById('inp-county-state').value.trim();
+  const statusEl   = document.getElementById('county-status');
+  if(!countyName){ statusEl.textContent='ENTER COUNTY'; statusEl.className='param-value warn'; return; }
+  statusEl.textContent='FETCHING…'; statusEl.className='param-value warn';
+  try{
+    const params = new URLSearchParams({format:'geojson',polygon_geojson:'1',limit:'10',dedupe:'0',country:'US'});
+    params.set('county', countyName);
+    if(stateName) params.set('state', stateName);
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?${params}`,{
+      signal:AbortSignal.timeout(10000),
+      headers:{'Accept-Language':'en'}
+    });
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const feat = data.features?.find(f=>f.geometry?.type==='Polygon'||f.geometry?.type==='MultiPolygon');
+    if(!feat) throw new Error('NOT FOUND');
+    const color = COUNTY_COLORS[(nextCountyId-1) % COUNTY_COLORS.length];
+    const layer = L.geoJSON(feat,{
+      style:{color,weight:2,fillOpacity:0.04,fillColor:color,opacity:0.9,dashArray:'6 4'}
+    }).addTo(map);
+    const label = (feat.properties?.display_name?.split(',')[0]||countyName).toUpperCase();
+    countyEntries.push({id:nextCountyId++, label, color, layer});
+    renderCountyList();
+    document.getElementById('inp-county-name').value='';
+    statusEl.textContent=`${countyEntries.length} LOADED`; statusEl.className='param-value ok';
+  } catch(e){
+    statusEl.textContent=e.message||'ERROR'; statusEl.className='param-value warn';
+  }
+}
+
+document.getElementById('btn-add-county').addEventListener('click', addCounty);
+document.getElementById('btn-clear-all-counties').addEventListener('click', clearAllCounties);
+document.getElementById('inp-county-name').addEventListener('keydown',e=>{if(e.key==='Enter') addCounty();});
+document.getElementById('inp-county-state').addEventListener('keydown',e=>{if(e.key==='Enter') addCounty();});
 </script>
 
 </body>
